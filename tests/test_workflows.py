@@ -64,6 +64,11 @@ def test_graph_validation_rejects_broken_connections_and_missing_state():
     with pytest.raises(WorkflowError, match="connect these outputs"):
         validate_workflow(incomplete)
 
+    disconnected = DEFAULT_WORKFLOW.model_copy(deep=True)
+    disconnected.nodes.append(WorkflowNode(id="generate_1", type="generate"))
+    with pytest.raises(WorkflowError, match="Nodes not connected to start .*generate_1"):
+        validate_workflow(disconnected)
+
     too_early = WorkflowDraft(name="Invalid", entry="generate", nodes=[
         WorkflowNode(id="generate", type="generate"),
     ])

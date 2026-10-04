@@ -163,7 +163,11 @@ def validate_workflow(draft: WorkflowDraft) -> WorkflowDraft:
             reached.add(current)
             pending.extend(nodes[current].transitions.values())
     if reached != set(nodes):
-        raise WorkflowError("Every node must be reachable from the entry node.")
+        missing = [identity for identity in ids if identity not in reached]
+        raise WorkflowError(
+            f"Nodes not connected to start ({draft.entry}): {', '.join(missing)}. "
+            "Select a connected node and point one of its outputs to each new node."
+        )
 
     terminals = {node.id for node in draft.nodes if not node.transitions}
     if not terminals:

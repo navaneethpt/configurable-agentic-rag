@@ -47,3 +47,16 @@ export function copyDraft(workflow: SavedWorkflow): WorkflowDraft {
     })),
   };
 }
+
+export function unreachableNodeIds(draft: WorkflowDraft): string[] {
+  const nodes = new Map(draft.nodes.map(node => [node.id, node]));
+  const reached = new Set<string>();
+  const pending = [draft.entry];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (reached.has(id) || !nodes.has(id)) continue;
+    reached.add(id);
+    pending.push(...Object.values(nodes.get(id)!.transitions));
+  }
+  return draft.nodes.filter(node => !reached.has(node.id)).map(node => node.id);
+}

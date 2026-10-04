@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, Copy, Plus, Save, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
-import { ConfigProperty, copyDraft, NodeType, SavedWorkflow, WorkflowDraft, WorkflowNode } from "../lib/workflows";
+import { ConfigProperty, copyDraft, NodeType, SavedWorkflow, unreachableNodeIds, WorkflowDraft, WorkflowNode } from "../lib/workflows";
 
 type Props = {
   open: boolean;
@@ -139,6 +139,9 @@ export default function WorkflowBuilder({ open, session, activeId, onClose, onAc
   const fields = Object.entries(nodeDefinition?.config_schema.properties || {});
   const savedDraft = workflows.find(item => item.id === selectedId);
   const isDirty = draft && (!savedDraft || JSON.stringify(copyDraft(savedDraft)) !== JSON.stringify(draft));
+  const unreachable = draft ? unreachableNodeIds(draft) : [];
+  const unconnected = draft?.nodes.flatMap(item => Object.entries(item.transitions)
+    .filter(([, target]) => !target).map(([output]) => `${item.id}.${output}`)) || [];
 
   function renderField(key: string, property: ConfigProperty) {
     if (!node) return null;
@@ -201,12 +204,16 @@ export default function WorkflowBuilder({ open, session, activeId, onClose, onAc
                 value={draft.max_steps} onChange={event => change(current => ({ ...current, max_steps: Number(event.target.value) }))} /></label>
             </div>
             <p className="workflow-hint">{editingId ? "Save edits as a new version for future questions." : "The default is a starting point. Saving creates your own workflow and activates it for future questions."} Choose a node to edit its settings and connect each output. Loops are allowed within the step limit.</p>
+            {(unreachable.length > 0 || unconnected.length > 0) && <div className="workflow-connectivity" role="status">
+              {unreachable.length > 0 && <p><strong>Not connected to Start:</strong> {unreachable.join(", ")}. Select a node already on the path and set one of its Connections to the new node.</p>}
+              {unconnected.length > 0 && <p><strong>Outputs needing a destination:</strong> {unconnected.join(", ")}.</p>}
+            </div>}
             <div className="workflow-editor">
               <div className="workflow-node-list">{draft.nodes.map(item => {
                 const definition = catalog.find(type => type.type === item.type);
-                return <button key={item.id} className={`workflow-node-card ${selectedNode === item.id ? "selected" : ""}`}
+                return <button key={item.id} className={`workflow-node-card ${selectedNode === item.id ? "selected" : ""} ${unreachable.includes(item.id) ? "unreachable" : ""}`}
                   onClick={() => setSelectedNode(item.id)}>
-                  <small>{definition?.kind || "missing type"} · {item.id}{draft.entry === item.id ? " · start" : ""}</small>
+                  <small>{definition?.kind || "missing type"} · {item.id}{draft.entry === item.id ? " · start" : ""}{unreachable.includes(item.id) ? " · not connected" : ""}</small>
                   <strong>{definition?.label || item.type}</strong>
                   <span>{Object.entries(item.transitions).length ? Object.entries(item.transitions).map(([port, target]) =>
                     `${port} → ${target || "unconnected"}`).join(" · ") : "Ends workflow"}</span>
@@ -233,7 +240,7 @@ export default function WorkflowBuilder({ open, session, activeId, onClose, onAc
       <footer className="workflow-footer"><span>{draft?.nodes.length || 0} nodes · {catalog.length} available types{isDirty ? " · unsaved edits" : ""}</span>
         <div><button className="workflow-secondary" disabled={busy || !draft || selectedId === activeId}
           onClick={() => { const saved = workflows.find(item => item.id === selectedId); if (saved) { onActivate(saved); setNotice("New questions will use this workflow."); } }}>Use selected</button>
-          <button className="workflow-save" disabled={busy || !draft || !session} onClick={save}><Save size={15} /> {editingId ? "Save changes and use" : "Save new workflow and use"}</button></div>
+          <button className="workflow-save" disabled={busy || !draft || !session || unreachable.length > 0 || unconnected.length > 0} onClick={save}><Save size={15} /> {editingId ? "Save changes and use" : "Save new workflow and use"}</button></div>
       </footer>
     </section>
   </div>;

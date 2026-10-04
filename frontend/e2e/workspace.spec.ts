@@ -143,6 +143,25 @@ test("workflow builder saves and activates settings used by research", async ({ 
   await expect(page.locator(".active-workflow")).toContainText("One pass research · v1");
 });
 
+test("workflow builder identifies disconnected nodes and guides their connections", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByLabel("Choose documents")).toBeEnabled();
+  await page.getByRole("button", { name: "Configure agents" }).first().click();
+  const builder = page.getByRole("dialog", { name: "Configure agents" });
+  await builder.getByRole("textbox", { name: "Workflow name" }).fill("Extra retrieval pass");
+  await builder.locator(".workflow-palette").getByRole("button", { name: /Document retrieval/ }).click();
+  await builder.getByRole("button", { name: "Add selected node" }).click();
+  await expect(builder.getByRole("status")).toContainText("Not connected to Start: retrieve_1");
+  await expect(builder.getByRole("status")).toContainText("retrieve_1.next");
+  await expect(builder.getByRole("button", { name: "Save new workflow and use" })).toBeDisabled();
+  await builder.getByLabel("retrieve_1 next target").selectOption("validate");
+  await builder.locator(".workflow-node-card").nth(1).click();
+  await builder.getByLabel("retrieve next target").selectOption("retrieve_1");
+  await expect(builder.getByRole("status")).toHaveCount(0);
+  await builder.getByRole("button", { name: "Save new workflow and use" }).click();
+  await expect(builder).toContainText("Saved version 1");
+});
+
 test("saved workflows stay in the browser session that created them", async ({ page, browser }) => {
   await page.goto("/");
   await expect(page.getByLabel("Choose documents")).toBeEnabled();

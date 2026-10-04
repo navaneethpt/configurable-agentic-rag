@@ -18,3 +18,6 @@
 .workflow-open .workflow-short-label{display:none}
 @media(max-width:390px){.workflow-open .workflow-full-label{display:none}.workflow-open .workflow-short-label{display:inline}}
 @media(max-width:767px){.guide-active{display:block}.guide-active svg{vertical-align:middle;margin-right:5px}.guide-active strong{display:block;margin:4px 0 0 22px}}
+.workflow-connectivity{margin:-8px 0 17px;padding:10px 12px;border:1px solid #e8c9b9;border-radius:8px;background:#fff4ec;color:#874b36;font-size:11px;line-height:1.5}
+.workflow-connectivity p+p{margin-top:5px}
+.workflow-node-card.unreachable{border-color:#d7a78e}
