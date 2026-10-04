@@ -48,7 +48,7 @@ sessions because they have no owner.
 
 The root `Dockerfile` builds the static Next.js workspace and serves it with FastAPI
 in one Docker Web Service. Push this repository to GitHub, then in Render choose
-**New → Web Service** and connect `navaneethpt/agentic-document-chat` on `main`.
+**New → Web Service** and connect `navaneethpt/configurable-agentic-rag` on `main`.
 Use these settings:
 
 | Setting | Value |
@@ -63,9 +63,8 @@ In **Environment**, add `GROQ_API_KEY` as a secret value. Do not add the key to 
 Dockerfile or commit `.env`. Render supplies `PORT`; the Docker command listens on
 `0.0.0.0:$PORT` with one worker. After deployment, open the service URL and check
 `/api/health` for `"answering_configured": true` before uploading a small document
-and asking a question. The first upload downloads the embedding model, so it can
-take longer than later uploads. If the service runs out of memory, choose a plan
-with more RAM.
+and asking a question. The Docker image includes the embedding model; indexing
+still uses memory, so large documents may require a plan with more RAM.
 
 This is a temporary-session POC. A restart or Free-plan spin-down discards document
 libraries and session IDs. Saved workflows are then inaccessible even if their

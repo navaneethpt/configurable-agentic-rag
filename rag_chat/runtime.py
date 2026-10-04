@@ -5,15 +5,16 @@ from threading import Lock
 
 import chromadb
 from chromadb.config import Settings
-from chromadb.utils.embedding_functions import DefaultEmbeddingFunction, ONNXMiniLM_L6_V2
+from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 from tokenizers import Tokenizer
 
+from .embedding import SharedMiniLMEmbedding
 from .sessions import SessionManager
 
 
 class Runtime:
     def __init__(self):
-        self.embedding = DefaultEmbeddingFunction()
+        self.embedding = SharedMiniLMEmbedding()
         self.manager = SessionManager(
             chromadb.EphemeralClient(settings=Settings(anonymized_telemetry=False)),
             self.embedding,
