@@ -13,7 +13,7 @@ class IndexedDocument:
     duplicate: bool = False
 
 
-def ingest(library, filename: str, data: bytes, tokenizer_factory, batch_size=8) -> IndexedDocument:
+def ingest(library, filename: str, data: bytes, tokenizer_factory, batch_size=1) -> IndexedDocument:
     if not library.healthy:
         raise DocumentError("This library needs to be reset. Select Clear session and upload again.")
     identity = sha256(data).hexdigest()
