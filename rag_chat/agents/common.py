@@ -70,7 +70,7 @@ class ValidationResult(ValidatorOutput):
 
 class GenerationOutput(BaseModel):
     status: Literal["answered", "missing_context"]
-    text: str = Field(min_length=1, max_length=12000)
+    text: str = Field(min_length=1, max_length=12000, description="For answered responses, cite every factual claim with an available source number such as [1]. For missing_context, request needed context without facts or citations.")
 
 
 class SourceOutput(BaseModel):

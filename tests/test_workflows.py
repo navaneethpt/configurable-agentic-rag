@@ -180,10 +180,28 @@ def test_intermediate_results_are_retained_but_do_not_become_user_responses(clie
 def test_generator_without_passages_rejects_fabricated_citations(client, status, text):
     library = SimpleNamespace(healthy=True, collection=Mock())
     library.collection.count.return_value = 1
-    client.chat.completions.create.side_effect = [answer_completion(text, status)]
+    client.chat.completions.create.side_effect = [answer_completion(text, status), answer_completion(text, status)]
     with pytest.raises(ChatError, match="source references"):
         answer_question(library, "When?", [], client, workflow=short_workflow())
     library.collection.query.assert_not_called()
+
+
+def test_generator_repairs_missing_citations_once_using_available_passages(client):
+    library = SimpleNamespace(healthy=True, collection=Mock())
+    library.collection.count.return_value = 1
+    library.collection.query.return_value = {
+        "ids": [["launch"]], "documents": [["Launch is in June."]],
+        "metadatas": [[{"filename": "launch.txt", "location": "page 1"}]], "distances": [[0.1]],
+    }
+    client.chat.completions.create.side_effect = [
+        answer_completion("Launch in June."), answer_completion("Launch in June. [1]"),
+    ]
+    result = answer_question(library, "When?", [], client, workflow=short_workflow("retrieve"))
+    assert result.text == "Launch in June. [1]" and len(result.sources) == 1
+    assert client.chat.completions.create.call_count == 2
+    correction = json.loads(client.chat.completions.create.call_args.kwargs["messages"][-2]["content"])
+    assert correction["available_source_numbers"] == [1]
+    assert len(result.trace) == 2
 
 
 def test_repeated_nodes_keep_ordered_outputs_without_overwrites(client):

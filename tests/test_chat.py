@@ -232,7 +232,7 @@ def test_no_evidence_and_empty_library(manager, tokenizer, client):
 
 @pytest.mark.parametrize("text", ["Unsupported answer.", "Made up. [9]", "Mixed. [1] [8]", ""])
 def test_rejects_missing_or_invalid_citations(manager, tokenizer, client, text):
-    client.chat.completions.create.side_effect = [plan(), sufficient(), answer_completion(text)]
+    client.chat.completions.create.side_effect = [plan(), sufficient(), answer_completion(text), answer_completion(text)]
     with pytest.raises(ChatError):
         answer_question(populated(manager, tokenizer), "When?", [], client)
 

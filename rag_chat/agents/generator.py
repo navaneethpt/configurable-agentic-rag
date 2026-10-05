@@ -28,22 +28,37 @@ def build(client, on_event, config):
                 "Answer only the supported parts and explicitly identify what remains unknown. "
                 "Do not invent facts to fill the listed gaps."
             )
-        output = _structured(client, GenerationOutput, [
+        messages = [
             {"role": "system", "content": instructions + " " + config["instructions"]},
             {"role": "user", "content": json.dumps({"question": inputs.question, "conversation": inputs.history,
                 "excerpts": [source.__dict__ for source in sources], "validation": previous,
                 "missing_evidence": previous["missing_evidence"] if previous else [],
                 "prior_outputs": inputs.outputs()})},
-        ], "answer generator", model=config["model"])
-        cited = {int(number) for number in re.findall(r"\[(\d+)\]", output.text)}
-        if output.status == "answered":
-            if not sources or not cited or not cited.issubset({source.number for source in sources}):
-                raise ChatError("The model returned an answer without valid source references. Please try again.")
-            selected = [source for source in sources if source.number in cited]
-        else:
-            if cited:
-                raise ChatError("The model returned source references in a context request. Please try again.")
-            selected = []
+        ]
+        for attempt in range(2):
+            output = _structured(client, GenerationOutput, messages, "answer generator", model=config["model"])
+            cited = {int(number) for number in re.findall(r"\[(\d+)\]", output.text)}
+            if output.status == "answered":
+                valid = bool(sources and cited) and cited.issubset({source.number for source in sources})
+                error = "The model returned an answer without valid source references. Please try again."
+                selected = [source for source in sources if source.number in cited]
+            else:
+                valid = not cited
+                error = "The model returned source references in a context request. Please try again."
+                selected = []
+            if valid:
+                break
+            if attempt:
+                raise ChatError(error)
+            messages = [*messages,
+                {"role": "system", "content": (
+                    "Correct the previous response. An answered text must include inline citations in the exact "
+                    "format [1], using only supplied excerpt numbers. For example: The launch is in June. [1] "
+                    "If excerpts are missing or do not support the answer, use missing_context with no citations "
+                    "and no factual answer. Return the corrected JSON only.")},
+                {"role": "user", "content": json.dumps({"invalid_response": output.model_dump(),
+                    "available_source_numbers": [source.number for source in sources]})},
+            ]
         data = {**output.model_dump(), "sources": [source.__dict__ for source in selected]}
         return NodeResult(AgentOutput("answer", data), None if inputs.is_terminal else "next",
             Answer(output.text, selected), details={"round": rounds(inputs),

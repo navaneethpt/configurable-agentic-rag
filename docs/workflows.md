@@ -63,7 +63,9 @@ result predating a later retrieval is not applied to that newer evidence.
 Generators use passages as factual evidence. Generated drafts are not source
 material. Supported answers must cite available passage numbers. Missing-context
 responses contain no factual answer or citations. A citation identifies a passage;
-it does not independently prove every claim is correct.
+it does not independently prove every claim is correct. The generator makes one
+correction attempt when citation checks fail; an invalid corrected response is
+still rejected.
 
 ## Register an agent or tool
 
