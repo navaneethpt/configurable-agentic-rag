@@ -21,3 +21,4 @@
 .workflow-connectivity{margin:-8px 0 17px;padding:10px 12px;border:1px solid #e8c9b9;border-radius:8px;background:#fff4ec;color:#874b36;font-size:11px;line-height:1.5}
 .workflow-connectivity p+p{margin-top:5px}
 .workflow-node-card.unreachable{border-color:#d7a78e}
+.workflow-inputs{margin:12px 0 17px;padding-bottom:13px;border-bottom:1px solid var(--line);font-size:11px;line-height:1.6;overflow-wrap:anywhere}.workflow-inputs h4{font-size:11px;margin:8px 0 5px}.workflow-inputs ul{padding-left:18px;margin:5px 0 12px}.workflow-inputs li{margin:5px 0}.workflow-inputs p{margin:5px 0;color:var(--muted)}

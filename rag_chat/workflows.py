@@ -35,6 +35,17 @@ class NodeConfig(BaseModel):
 NodeFactory = Callable[[Any, Callable[[dict[str, Any]], None] | None, dict[str, Any]], Callable]
 
 
+def initial_workflow_state(library: Any, question: str, history: list[dict]) -> dict[str, Any]:
+    """Inputs available to every workflow's entry node; no agent results are invented."""
+    return {
+        "library": library, "question": question, "history": history,
+        "round": 0, "feedback": [], "evidence": [], "trace": [], "steps": 0, "route": "",
+    }
+
+
+INITIAL_STATE_KEYS = frozenset(initial_workflow_state(None, "", []))
+
+
 @dataclass(frozen=True)
 class NodeType:
     key: str
@@ -53,6 +64,7 @@ class NodeType:
             "type": self.key, "label": self.label, "kind": self.kind,
             "description": self.description, "outputs": list(self.outputs),
             "requires": list(self.requires), "provides": list(self.provides),
+            "initial_inputs": sorted(INITIAL_STATE_KEYS),
             "config_schema": schema,
         }
 
@@ -196,7 +208,7 @@ def validate_workflow(draft: WorkflowDraft) -> WorkflowDraft:
 
     # Every possible path to a node must supply the state it reads. This also
     # rejects graphs that could reach a generator without validating evidence.
-    base = {"library", "question", "history", "round", "feedback", "evidence", "trace", "steps", "route"}
+    base = set(INITIAL_STATE_KEYS)
     definitions = {node.id: node_type(node.type) for node in draft.nodes}
     universe = base | {key for definition in definitions.values()
                        for key in (*definition.requires, *definition.provides)}
@@ -221,7 +233,17 @@ def validate_workflow(draft: WorkflowDraft) -> WorkflowDraft:
     for identity in ids:
         missing = set(definitions[identity].requires) - available[identity]
         if missing:
-            raise WorkflowError(f"{identity} needs state from an earlier node: {', '.join(sorted(missing))}.")
+            catalog = node_catalog()
+            hints = []
+            for key in sorted(missing):
+                producers = [f"{item['label']} ({item['type']})" for item in catalog if key in item["provides"]]
+                hints.append(f"{key}: produced by {', '.join(producers)}" if producers
+                             else f"{key}: no registered node produces this input")
+            raise WorkflowError(
+                f"{identity} needs state from an earlier node: {', '.join(sorted(missing))}. "
+                + "; ".join(hints) + ". Connect a producer before this node on every path. "
+                "The user question is already available as question; it does not supply these results."
+            )
     for identity in terminals:
         if "answer" not in definitions[identity].provides:
             raise WorkflowError(f"Terminal node {identity} must produce an answer.")

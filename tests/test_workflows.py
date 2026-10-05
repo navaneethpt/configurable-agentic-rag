@@ -7,9 +7,9 @@ from pydantic import Field
 import pytest
 
 from conftest import completion
-from rag_chat.chat import Answer, ChatError, answer_question
+from rag_chat.chat import Answer, ChatError, NO_EVIDENCE, answer_question
 from rag_chat.indexing import ingest
-from rag_chat.workflows import (DEFAULT_WORKFLOW, NodeConfig, NodeType, WorkflowConflict,
+from rag_chat.workflows import (DEFAULT_WORKFLOW, INITIAL_STATE_KEYS, NodeConfig, NodeType, WorkflowConflict,
                                 WorkflowDraft, WorkflowError, WorkflowNode, WorkflowNotFound, WorkflowStore,
                                 node_catalog, register_node, unregister_node, validate_workflow)
 
@@ -83,6 +83,112 @@ def test_graph_validation_rejects_broken_connections_and_missing_state():
     too_few_steps.max_steps = 2
     with pytest.raises(WorkflowError, match="Maximum steps"):
         validate_workflow(too_few_steps)
+
+
+def test_retrieval_and_generation_still_need_upstream_results():
+    draft = WorkflowDraft(name="Missing inputs", entry="retrieve", nodes=[
+        WorkflowNode(id="retrieve", type="retrieve", transitions={"next": "generate"}),
+        WorkflowNode(id="generate", type="generate"),
+    ])
+    with pytest.raises(WorkflowError, match=r"retrieve needs state from an earlier node: searches") as error:
+        validate_workflow(draft)
+    assert "Search planner (planner)" in str(error.value)
+    assert "question is already available" in str(error.value)
+
+    draft.entry = "planner"
+    draft.nodes.insert(0, WorkflowNode(id="planner", type="planner", transitions={"next": "retrieve"}))
+    with pytest.raises(WorkflowError, match=r"generate needs state from an earlier node: validation") as error:
+        validate_workflow(draft)
+    assert "Evidence validator (validate)" in str(error.value)
+
+
+def test_custom_start_receives_question_history_and_all_declared_initial_inputs(client):
+    received = []
+
+    def factory(model, on_event, config):
+        def run(state):
+            received.append(dict(state))
+            return {"answer": Answer(state["question"], [])}, None
+        return run
+
+    register_node(NodeType("context_answer", "Context answer", "agent", "Test entry context.",
+                           (), NodeConfig, factory, requires=tuple(INITIAL_STATE_KEYS), provides=("answer",)))
+    try:
+        workflow = WorkflowDraft(name="Context", entry="custom", nodes=[
+            WorkflowNode(id="custom", type="context_answer"),
+        ])
+        library = SimpleNamespace(healthy=True, collection=Mock())
+        library.collection.count.return_value = 1
+        history = [{"role": "user", "content": "Which launch?"},
+                   {"role": "assistant", "content": "Project Cedar."}]
+        assert answer_question(library, "When is launch?", history, client, workflow=workflow).text == "When is launch?"
+        assert set(received[0]) == INITIAL_STATE_KEYS
+        assert received[0]["library"] is library
+        assert received[0]["question"] == "When is launch?"
+        assert received[0]["history"] == history
+        assert received[0]["route"] == "" and received[0]["steps"] == 0
+        assert "searches" not in received[0] and "validation" not in received[0]
+        history.append({"role": "user", "content": "Another turn"})
+        assert len(received[0]["history"]) == 2
+        catalog = next(item for item in node_catalog() if item["type"] == "context_answer")
+        assert set(catalog["initial_inputs"]) == INITIAL_STATE_KEYS
+
+        # An empty library still returns immediately, even for a custom entry node.
+        library.collection.count.return_value = 0
+        assert answer_question(library, "When?", history, client, workflow=workflow).text == NO_EVIDENCE
+        assert len(received) == 1
+        client.chat.completions.create.assert_not_called()
+    finally:
+        unregister_node("context_answer")
+
+
+@pytest.mark.parametrize("entry", ["planner", "need_upload"])
+def test_valid_builtin_start_receives_question_and_history(entry, client, monkeypatch):
+    from rag_chat.chat import StateGraph
+
+    received = []
+    add_node = StateGraph.add_node
+
+    def capture_node(graph, name, action, **kwargs):
+        def record(state):
+            if name == entry:
+                received.append(dict(state))
+            return action(state)
+        return add_node(graph, name, record, **kwargs)
+
+    monkeypatch.setattr(StateGraph, "add_node", capture_node)
+    workflow = DEFAULT_WORKFLOW if entry == "planner" else WorkflowDraft(name="Ask for sources", entry=entry, nodes=[
+        WorkflowNode(id=entry, type=entry),
+    ])
+    client.chat.completions.create.side_effect = [
+        completion(json.dumps({"searches": [{"query": "launch", "purpose": "Find date"}]})),
+        completion(json.dumps({"decision": "sufficient", "confidence": 0.9})),
+        completion("Launch in June. [1]"),
+    ]
+    collection = Mock()
+    collection.count.return_value = 1
+    collection.query.return_value = {"ids": [["one"]], "documents": [["Launch in June."]],
+                                     "metadatas": [[{"filename": "launch.txt", "location": "Text"}]]}
+    history = [{"role": "user", "content": "Tell me about Project Cedar."}]
+    answer_question(SimpleNamespace(healthy=True, collection=collection), "When is launch?", history, client,
+                    workflow=workflow)
+    assert len(received) == 1
+    assert set(received[0]) == INITIAL_STATE_KEYS
+    assert received[0]["question"] == "When is launch?"
+    assert received[0]["history"] == history
+
+
+def test_missing_extension_input_names_the_input_when_no_producer_is_registered():
+    register_node(NodeType("unknown_input", "Unknown input", "agent", "Missing dependency.", (), NodeConfig,
+                           lambda *_: lambda state: ({}, None), requires=("external_data",), provides=("answer",)))
+    try:
+        draft = WorkflowDraft(name="Missing producer", entry="custom", nodes=[
+            WorkflowNode(id="custom", type="unknown_input"),
+        ])
+        with pytest.raises(WorkflowError, match="external_data: no registered node produces this input"):
+            validate_workflow(draft)
+    finally:
+        unregister_node("unknown_input")
 
 
 def test_configured_planner_and_retriever_control_searches(client):

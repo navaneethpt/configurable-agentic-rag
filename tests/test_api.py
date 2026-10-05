@@ -10,7 +10,7 @@ import pytest
 from conftest import completion
 from rag_chat.api import create_app
 from rag_chat.chat import Answer, Source
-from rag_chat.workflows import DEFAULT_WORKFLOW
+from rag_chat.workflows import DEFAULT_WORKFLOW, INITIAL_STATE_KEYS
 
 
 @pytest.fixture
@@ -221,7 +221,11 @@ def test_saved_workflow_settings_control_chat_execution(api_client):
     headers = setup_session(client)
     types = client.get("/api/node-types").json()
     assert {item["type"] for item in types} >= {"planner", "retrieve", "validate", "generate", "need_upload"}
-    assert next(item for item in types if item["type"] == "retrieve")["kind"] == "tool"
+    retriever = next(item for item in types if item["type"] == "retrieve")
+    assert retriever["kind"] == "tool"
+    assert retriever["requires"] == ["library", "searches", "round"]
+    assert retriever["provides"] == ["evidence", "new_evidence_count"]
+    assert set(retriever["initial_inputs"]) == INITIAL_STATE_KEYS
 
     draft = DEFAULT_WORKFLOW.model_copy(deep=True)
     draft.name = "One pass research"

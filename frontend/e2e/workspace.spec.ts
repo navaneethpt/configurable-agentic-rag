@@ -126,8 +126,17 @@ test("workflow builder saves and activates settings used by research", async ({ 
   await expect(builder).toContainText("Document retrieval");
   await expect(builder).toContainText("agent");
   await expect(builder).toContainText("tool");
+  await expect(builder).toContainText("Your question and conversation history are passed to the selected start node");
+  const inputs = builder.getByRole("region", { name: "Node inputs and outputs" });
+  await expect(inputs).toContainText("question — Provided when the workflow starts");
+  await expect(inputs).toContainText("history — Provided when the workflow starts");
+  await builder.locator(".workflow-node-card").nth(1).click();
+  await expect(inputs).toContainText("searches — From an earlier node: Search planner");
+  await expect(inputs).toContainText("evidence, new_evidence_count");
   await builder.getByRole("textbox", { name: "Workflow name" }).fill("One pass research");
   await builder.getByRole("button", { name: /validate.*Evidence validator/i }).click();
+  await expect(inputs).toContainText("searches — From an earlier node: Search planner");
+  await expect(inputs).toContainText("validation, feedback, round_limit");
   await builder.getByLabel("Max Rounds").fill("1");
   await builder.getByLabel("Final Confidence").fill("0.9");
   await page.screenshot({ path: "test-results/workflow-builder.png", fullPage: true });
@@ -141,6 +150,25 @@ test("workflow builder saves and activates settings used by research", async ({ 
   await expect(page.locator(".right-panel")).not.toContainText("Round 3");
   await page.reload();
   await expect(page.locator(".active-workflow")).toContainText("One pass research · v1");
+});
+
+test("workflow save explains missing required inputs and their producers", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByLabel("Choose documents")).toBeEnabled();
+  await page.getByRole("button", { name: "Configure agents" }).first().click();
+  const builder = page.getByRole("dialog", { name: "Configure agents" });
+  await expect(builder.getByLabel("Start node")).toHaveValue("planner");
+  await builder.getByRole("button", { name: "Remove planner", exact: true }).click();
+  await builder.getByRole("button", { name: /validate.*Evidence validator/ }).click();
+  await builder.getByRole("button", { name: "Remove validate", exact: true }).click();
+  await builder.getByRole("button", { name: /need_upload.*Request more evidence/ }).click();
+  await builder.getByRole("button", { name: "Remove need_upload", exact: true }).click();
+  await builder.getByRole("button", { name: /retrieve.*Document retrieval/ }).click();
+  await builder.getByLabel("retrieve next target").selectOption("generate");
+  await builder.getByRole("button", { name: "Save new workflow and use" }).click();
+  await expect(builder.getByRole("alert")).toContainText("retrieve needs state from an earlier node: searches");
+  await expect(builder.getByRole("alert")).toContainText("Search planner (planner)");
+  await expect(builder.getByRole("alert")).toContainText("question is already available");
 });
 
 test("workflow builder identifies disconnected nodes and guides their connections", async ({ page }) => {

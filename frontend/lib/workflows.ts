@@ -34,6 +34,9 @@ export type NodeType = {
   kind: "agent" | "tool";
   description: string;
   outputs: string[];
+  requires: string[];
+  provides: string[];
+  initial_inputs: string[];
   config_schema: { properties?: Record<string, ConfigProperty> };
 };
 

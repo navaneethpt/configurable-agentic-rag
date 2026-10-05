@@ -35,6 +35,28 @@ stopped by `max_steps`. A terminal node must return an `Answer`. These checks
 prevent many wiring mistakes; an extension's Python handler can still fail at run
 time, in which case the chat stream reports an error without committing a reply.
 
+## Question and node dependencies
+
+For a healthy session with uploaded documents, every workflow's selected start
+node receives the user's question as `state["question"]`, along with the bounded
+conversation context in `state["history"]`. This applies to built-in and custom
+registered nodes. When no documents have been uploaded, Folio returns its immediate
+no-document response without running any workflow nodes.
+
+The editor shows **Required inputs** and **Produced outputs** for the selected
+node. Inputs marked **Provided when the workflow starts** come from the shared
+initial-state contract. Other required inputs must be produced by an earlier node
+on every path to the selected node. Save errors identify missing inputs and the
+registered node types that produce them. These are state outputs, distinct from
+the named connections such as `next` and `retry`.
+
+The question does not replace results from earlier agents. For example, retrieval
+requires `searches` from a search planner; the answer generator requires
+`validation` from an evidence validator. A `retrieve → generate` graph remains
+invalid without those results. To omit a node, remove it and reconnect the graph
+while preserving the required inputs of every remaining node. No searches or
+validation results are fabricated to fill missing dependencies.
+
 ## Add an agent or tool in Python
 
 Agent and tool code is trusted server code. A browser user can connect and configure
@@ -81,8 +103,12 @@ A factory receives the request's Groq client, an optional event callback, and th
 validated settings dictionary. It returns a handler that receives graph state and
 returns `(state_updates, output_name)`. Use `None` for terminal nodes. Declare
 `requires` for state keys the handler reads and `provides` for keys it writes.
-The initial state contains `library`, `question`, `history`, `round`, `feedback`,
-`evidence`, and `trace`. The default agents add `searches`, `validation`, and
+The shared initial state contains `library`, `question`, `history`, `round`,
+`feedback`, `evidence`, `trace`, `steps`, and `route`. Validation and execution use
+the same contract, also exposed as `initial_inputs` in each catalog entry. Empty
+evidence and feedback lists, round and step counters at zero, and an empty route
+are initialization values rather than results from an earlier agent.
+The default agents add `searches`, `validation`, and
 `answer` as they run. Settings must be flat strings, integers, numbers, or booleans
 so the generic UI can render them.
 
@@ -91,7 +117,9 @@ they run. The default workflow remains available if the extension is removed.
 
 ## API shape
 
-`GET /api/node-types` returns the catalog and JSON schemas. Every workflow endpoint
+`GET /api/node-types` returns the catalog and JSON schemas, including `requires`,
+`provides`, and the additive `initial_inputs` field. Saved graph schemas and
+extension handler signatures are unchanged. Every workflow endpoint
 requires the current `X-Session-ID` header; `GET /api/workflows` returns only that
 session's saved definitions and the default template. A new workflow is posted to
 `/api/workflows` as:

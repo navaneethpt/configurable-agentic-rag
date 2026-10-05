@@ -204,6 +204,7 @@ export default function WorkflowBuilder({ open, session, activeId, onClose, onAc
                 value={draft.max_steps} onChange={event => change(current => ({ ...current, max_steps: Number(event.target.value) }))} /></label>
             </div>
             <p className="workflow-hint">{editingId ? "Save edits as a new version for future questions." : "The default is a starting point. Saving creates your own workflow and activates it for future questions."} Choose a node to edit its settings and connect each output. Loops are allowed within the step limit.</p>
+            <p className="workflow-hint">Your question and conversation history are passed to the selected start node. Additional required inputs must come from earlier nodes. With no uploaded documents, Folio responds immediately without running the workflow.</p>
             {(unreachable.length > 0 || unconnected.length > 0) && <div className="workflow-connectivity" role="status">
               {unreachable.length > 0 && <p><strong>Not connected to Start:</strong> {unreachable.join(", ")}. Select a node already on the path and set one of its Connections to the new node.</p>}
               {unconnected.length > 0 && <p><strong>Outputs needing a destination:</strong> {unconnected.join(", ")}.</p>}
@@ -223,6 +224,17 @@ export default function WorkflowBuilder({ open, session, activeId, onClose, onAc
                 <div className="workflow-inspector-head"><div><small>{nodeDefinition?.kind}</small><h3>{nodeDefinition?.label || node.type}</h3><p>{nodeDefinition?.description}</p></div>
                   <button aria-label={`Remove ${node.id}`} onClick={() => removeNode(node.id)} disabled={draft.nodes.length === 1}><Trash2 size={16} /></button></div>
                 <div className="workflow-id">Node ID: <code>{node.id}</code></div>
+                <section className="workflow-inputs" aria-label="Node inputs and outputs">
+                  <h4>Required inputs</h4>
+                  {nodeDefinition?.requires.length ? <ul>{nodeDefinition.requires.map(input => {
+                    const initial = nodeDefinition.initial_inputs.includes(input);
+                    const producers = catalog.filter(type => type.provides.includes(input));
+                    return <li key={input}><code>{input}</code> — {initial ? "Provided when the workflow starts" :
+                      producers.length ? `From an earlier node: ${producers.map(type => type.label).join(", ")}` : "Needs an earlier producer; none is registered"}</li>;
+                  })}</ul> : <p>No additional inputs required.</p>}
+                  <h4>Produced outputs</h4>
+                  <p>{nodeDefinition?.provides.length ? nodeDefinition.provides.join(", ") : "No state outputs declared."}</p>
+                </section>
                 {fields.length > 0 && <div className="workflow-fields"><h4>Settings</h4>{fields.map(([key, property]) => renderField(key, property))}</div>}
                 <div className="workflow-transitions"><h4>Connections</h4>{nodeDefinition?.outputs.length
                   ? nodeDefinition.outputs.map(output => <label className="workflow-field" key={output}><span>{output.replaceAll("_", " ")} <ArrowRight size={13} /></span>

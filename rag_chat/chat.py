@@ -10,7 +10,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field, ValidationError
 
 from .workflows import (DEFAULT_WORKFLOW, NodeConfig, NodeType, WorkflowDraft,
-                        node_type, register_node, validate_workflow)
+                        initial_workflow_state, node_type, register_node, validate_workflow)
 
 MODEL = "openai/gpt-oss-20b"
 NO_EVIDENCE = "I couldn't find enough information in your uploaded documents to answer that question."
@@ -399,10 +399,9 @@ def answer_question(library, question: str, history: list[dict], client,
     except Exception:
         raise ChatError("Cannot read the document library. Clear the session and upload again.") from None
     selected = workflow or DEFAULT_WORKFLOW
-    result = build_agentic_graph(client, on_event, selected).invoke({
-        "library": library, "question": question, "history": _context_history(history),
-        "round": 0, "feedback": [], "evidence": [], "trace": [], "steps": 0,
-    }, config={"recursion_limit": selected.max_steps * 2 + 10})
+    result = build_agentic_graph(client, on_event, selected).invoke(
+        initial_workflow_state(library, question, _context_history(history)),
+        config={"recursion_limit": selected.max_steps * 2 + 10})
     answer = result.get("answer")
     if not isinstance(answer, Answer):
         raise ChatError("The workflow ended without an answer. Edit the workflow and try again.")
