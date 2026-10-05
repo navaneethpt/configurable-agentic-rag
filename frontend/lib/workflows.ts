@@ -34,8 +34,12 @@ export type NodeType = {
   kind: "agent" | "tool";
   description: string;
   outputs: string[];
-  requires: string[];
-  provides: string[];
+  accepted_inputs: string[];
+  input_schema: Record<string, unknown>;
+  output_kind: string;
+  output_schema: { properties?: Record<string, unknown>; type?: string };
+  missing_input_behavior: string;
+  terminal_role: "generator" | "evidence_request" | null;
   initial_inputs: string[];
   config_schema: { properties?: Record<string, ConfigProperty> };
 };

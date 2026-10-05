@@ -13,7 +13,9 @@ from threading import RLock
 from typing import Any, Callable, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
+
+from .agent_contracts import NodeInput
 
 
 class WorkflowError(ValueError):
@@ -39,7 +41,7 @@ def initial_workflow_state(library: Any, question: str, history: list[dict]) -> 
     """Inputs available to every workflow's entry node; no agent results are invented."""
     return {
         "library": library, "question": question, "history": history,
-        "round": 0, "feedback": [], "evidence": [], "trace": [], "steps": 0, "route": "",
+        "results": [], "trace": [], "steps": 0, "route": "",
     }
 
 
@@ -55,16 +57,26 @@ class NodeType:
     outputs: tuple[str, ...]
     config_model: type[NodeConfig]
     factory: NodeFactory | None = None
-    requires: tuple[str, ...] = ()
-    provides: tuple[str, ...] = ()
+    accepted_inputs: tuple[str, ...] = ()
+    output_kind: str = "custom"
+    output_model: Any = None
+    missing_input_behavior: str = "Use the question and available earlier outputs."
+    terminal_role: Literal["generator", "evidence_request"] | None = None
 
     def catalog(self) -> dict[str, Any]:
         schema = self.config_model.model_json_schema()
         return {
             "type": self.key, "label": self.label, "kind": self.kind,
             "description": self.description, "outputs": list(self.outputs),
-            "requires": list(self.requires), "provides": list(self.provides),
-            "initial_inputs": sorted(INITIAL_STATE_KEYS),
+            "accepted_inputs": list(self.accepted_inputs),
+            "input_schema": TypeAdapter(NodeInput).json_schema(),
+            "output_kind": self.output_kind,
+            "output_schema": self.output_model.json_schema() if hasattr(self.output_model, "json_schema")
+                             else self.output_model.model_json_schema() if self.output_model
+                             else {"anyOf": [{"type": "object"}, {"type": "array"}]},
+            "missing_input_behavior": self.missing_input_behavior,
+            "terminal_role": self.terminal_role,
+            "initial_inputs": sorted(NodeInput.__dataclass_fields__),
             "config_schema": schema,
         }
 
@@ -80,8 +92,10 @@ def register_node(node: NodeType) -> None:
         raise ValueError("Node type must use a lowercase identifier.")
     if len(set(node.outputs)) != len(node.outputs) or any(not output for output in node.outputs):
         raise ValueError("Node outputs must be nonempty and unique.")
-    if node.factory is None and node.key not in {"planner", "retrieve", "validate", "generate", "need_upload"}:
-        raise ValueError("Extension nodes need an execution factory.")
+    if node.factory is None:
+        raise ValueError("Nodes need an execution factory.")
+    if node.terminal_role not in {None, "generator", "evidence_request"}:
+        raise ValueError("Only generators and evidence requests can end a workflow.")
     for name, field in node.config_model.model_json_schema().get("properties", {}).items():
         if field.get("type") not in {"string", "integer", "number", "boolean"}:
             raise ValueError(f"Setting {name} must have a simple type the workflow editor can render.")
@@ -162,7 +176,9 @@ def validate_workflow(draft: WorkflowDraft) -> WorkflowDraft:
             definition.config_model.model_validate(node.config)
         except ValidationError as exc:
             raise WorkflowError(f"Invalid settings for {node.id}: {exc.errors()[0]['msg']}.") from None
-        if set(node.transitions) != set(definition.outputs):
+        if not node.transitions and definition.terminal_role:
+            pass
+        elif set(node.transitions) != set(definition.outputs) or not node.transitions:
             raise WorkflowError(f"{node.id} must connect these outputs: {', '.join(definition.outputs) or '(none)'}.")
         if any(target not in nodes for target in node.transitions.values()):
             raise WorkflowError(f"{node.id} has a transition to a missing node.")
@@ -206,47 +222,9 @@ def validate_workflow(draft: WorkflowDraft) -> WorkflowDraft:
             break
         frontier.extend((target, distance + 1) for target in nodes[identity].transitions.values())
 
-    # Every possible path to a node must supply the state it reads. This also
-    # rejects graphs that could reach a generator without validating evidence.
-    base = set(INITIAL_STATE_KEYS)
-    definitions = {node.id: node_type(node.type) for node in draft.nodes}
-    universe = base | {key for definition in definitions.values()
-                       for key in (*definition.requires, *definition.provides)}
-    predecessors: dict[str, set[str]] = {identity: set() for identity in nodes}
-    for node in draft.nodes:
-        for target in node.transitions.values():
-            predecessors[target].add(node.id)
-    available = {identity: set(universe) for identity in nodes}
-    while True:
-        changed = False
-        for identity in ids:
-            incoming = [available[source] | set(definitions[source].provides)
-                        for source in predecessors[identity]]
-            if identity == draft.entry:
-                incoming.append(base)
-            guaranteed = set.intersection(*incoming) if incoming else set()
-            if guaranteed != available[identity]:
-                available[identity] = guaranteed
-                changed = True
-        if not changed:
-            break
-    for identity in ids:
-        missing = set(definitions[identity].requires) - available[identity]
-        if missing:
-            catalog = node_catalog()
-            hints = []
-            for key in sorted(missing):
-                producers = [f"{item['label']} ({item['type']})" for item in catalog if key in item["provides"]]
-                hints.append(f"{key}: produced by {', '.join(producers)}" if producers
-                             else f"{key}: no registered node produces this input")
-            raise WorkflowError(
-                f"{identity} needs state from an earlier node: {', '.join(sorted(missing))}. "
-                + "; ".join(hints) + ". Connect a producer before this node on every path. "
-                "The user question is already available as question; it does not supply these results."
-            )
     for identity in terminals:
-        if "answer" not in definitions[identity].provides:
-            raise WorkflowError(f"Terminal node {identity} must produce an answer.")
+        if not node_type(nodes[identity].type).terminal_role:
+            raise WorkflowError(f"Terminal node {identity} must be an answer generator or evidence request.")
     return draft
 
 

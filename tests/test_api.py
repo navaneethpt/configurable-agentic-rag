@@ -7,10 +7,10 @@ from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 import pytest
 
-from conftest import completion
+from conftest import completion, answer_completion
 from rag_chat.api import create_app
 from rag_chat.chat import Answer, Source
-from rag_chat.workflows import DEFAULT_WORKFLOW, INITIAL_STATE_KEYS
+from rag_chat.workflows import DEFAULT_WORKFLOW, WorkflowDraft, WorkflowNode
 
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def api_client(manager, tokenizer, tmp_path):
     model.chat.completions.create.side_effect = [
         completion(json.dumps({"searches": [{"query": "launch", "purpose": "Find the launch date"}]})),
         completion(json.dumps({"decision": "sufficient", "confidence": 0.95, "missing_evidence": []})),
-        completion("The launch is in June. [1]"),
+        answer_completion("The launch is in June. [1]"),
     ]
     app = create_app(lambda: runtime, lambda: model, workflow_db_path=tmp_path / "workflows.sqlite3")
     with TestClient(app) as client:
@@ -49,7 +49,8 @@ def test_session_restore_chat_events_and_clear(api_client):
     response = client.post("/api/chat", headers=headers, json={"question": "When is launch?"})
     events = parse_events(response)
     assert response.status_code == 200
-    assert events[0] == ("progress", {"event": "node_start", "node": "planner", "round": 1})
+    assert events[0] == ("progress", {"event": "node_start", "node": "planner", "node_type": "planner",
+                                     "label": "Search planner", "step": 1})
     assert events[-1][0] == "answer"
     assert any(event[1].get("event") == "search" for event in events)
     state = client.get("/api/session", headers=headers).json()
@@ -59,6 +60,26 @@ def test_session_restore_chat_events_and_clear(api_client):
     assert state["operation"]["status"] == "complete"
     assert client.delete("/api/session", headers=headers).status_code == 204
     assert client.get("/api/session", headers=headers).status_code == 410
+
+
+def test_generator_workflow_is_saved_but_upload_requirement_remains(api_client):
+    client, _, model = api_client
+    session_id = client.post("/api/sessions").json()["id"]
+    headers = {"X-Session-ID": session_id}
+    draft = WorkflowDraft(name="Generator only", entry="generate", nodes=[WorkflowNode(id="generate", type="generate")])
+    saved = client.post("/api/workflows", headers=headers, json=draft.model_dump())
+    assert saved.status_code == 201
+    body = {"question": "When?", "workflow_id": saved.json()["id"]}
+    rejected = client.post("/api/chat", headers=headers, json=body)
+    assert rejected.status_code == 409 and "Upload" in rejected.json()["detail"]
+    model.chat.completions.create.assert_not_called()
+    client.post("/api/documents", headers=headers, files={"file": ("launch.txt", b"Launch in June.")})
+    model.chat.completions.create.side_effect = [answer_completion("Please provide the relevant excerpts.", "missing_context")]
+    response = client.post("/api/chat", headers=headers, json=body)
+    final = parse_events(response)[-1]
+    assert final[0] == "answer" and final[1]["sources"] == []
+    assert final[1]["content"] == "Please provide the relevant excerpts."
+    assert model.chat.completions.create.call_count == 1
 
 
 def test_poll_does_not_extend_idle_expiry(api_client):
@@ -223,9 +244,9 @@ def test_saved_workflow_settings_control_chat_execution(api_client):
     assert {item["type"] for item in types} >= {"planner", "retrieve", "validate", "generate", "need_upload"}
     retriever = next(item for item in types if item["type"] == "retrieve")
     assert retriever["kind"] == "tool"
-    assert retriever["requires"] == ["library", "searches", "round"]
-    assert retriever["provides"] == ["evidence", "new_evidence_count"]
-    assert set(retriever["initial_inputs"]) == INITIAL_STATE_KEYS
+    assert retriever["accepted_inputs"] == ["question", "search_queries", "passages"]
+    assert retriever["output_kind"] == "passages"
+    assert {"question", "history", "prior_results", "services"} <= set(retriever["initial_inputs"])
 
     draft = DEFAULT_WORKFLOW.model_copy(deep=True)
     draft.name = "One pass research"
@@ -257,7 +278,7 @@ def test_saved_workflow_settings_control_chat_execution(api_client):
         completion(json.dumps({"searches": [{"query": "launch", "purpose": "Find launch."}]})),
         completion(json.dumps({"decision": "needs_more_evidence", "confidence": 0.5,
                                "missing_evidence": ["schedule"]})),
-        completion("Launch in June. [1]"),
+        answer_completion("Launch in June. [1]"),
     ]
     second = client.post("/api/chat", headers=headers,
                          json={"question": "When?", "workflow_id": workflow["id"]})

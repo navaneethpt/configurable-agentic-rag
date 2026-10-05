@@ -8,10 +8,10 @@ import { NodeType, SavedWorkflow } from "../lib/workflows";
 
 const explanations: Record<string, string> = {
   planner: "Turns your question and recent conversation into focused search queries. Validator feedback can send it back to plan another search.",
-  retrieve: "Searches only the documents uploaded to your current session. It gathers unique passages and keeps their file and location details.",
+  retrieve: "Searches your session documents with earlier search queries or directly with your original question. It returns unique passages with file and location details.",
   validate: "Checks whether those passages cover the material parts of the question. It decides whether to answer, search again, or request missing documents.",
-  generate: "Writes from the gathered passages and cites their source numbers. Folio checks that cited numbers point to available passages.",
-  need_upload: "Explains what evidence is missing when the workflow cannot support a reliable answer.",
+  generate: "Writes from available passages, with or without a validator. If passages are missing, it explains what context is needed. It can produce an intermediate draft or finish with a cited answer.",
+  need_upload: "Describes missing evidence, or requests relevant documents when no specific gaps exist. It can finish the workflow or pass the request to another node.",
 };
 
 const outcomeLabels: Record<string, string> = {
@@ -105,9 +105,10 @@ export default function AgentGuide() {
         <div className="guide-panel guide-customize"><span className="eyebrow">MAKE THE AGENTS YOURS</span><h2>Configure the workflow for your requirement</h2>
           <ol>
             <li>Open <strong>Configure agents</strong> and copy the default workflow.</li>
-            <li>Change an agent’s model or instructions, adjust search and evidence settings, or add registered agents and tools.</li>
-            <li>Connect each node’s outputs, choose the start node, and save. Saving activates that version for new questions in this browser tab.</li>
+            <li>Add or remove registered agents and tools, change their settings, and arrange them for your task. Every node receives your original question and all earlier outputs.</li>
+            <li>Connect routing outcomes, choose the start node, and finish each path with Answer generator or Request more evidence. These two types can also continue to another node. Save to activate your workflow.</li>
           </ol>
+          <p>A generator alone asks for missing context. Retrieval followed by generation searches directly with your question; planner and validator are optional. Upload a document before asking questions.</p>
           <p>Saved workflows are visible only in this session. Earlier answers keep the workflow version that produced them. New agent and tool types registered on the server appear in the builder automatically.</p>
           <a className="guide-primary" href="/?configure=agents"><Settings2 size={16} /> Configure agents</a>
         </div>

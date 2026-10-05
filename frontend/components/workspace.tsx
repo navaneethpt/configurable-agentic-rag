@@ -10,7 +10,12 @@ import { SavedWorkflow } from "../lib/workflows";
 import WorkflowBuilder from "./workflow-builder";
 const stageNames: Record<string, string> = { planner: "Planning searches", retrieve: "Searching documents", validate: "Checking evidence", generate: "Preparing answer", need_upload: "More evidence needed" };
 const completedNames: Record<string, string> = { planner: "Search plan ready", retrieve: "Retrieval complete", validate: "Evidence checked", generate: "Answer ready", need_upload: "More evidence needed", search: "Search complete" };
-function label(event: Trace) { return event.node ? stageNames[event.node] || event.node : completedNames[event.event] || event.event; }
+function label(event: Trace) {
+  if (event.event === "node_start") return stageNames[event.node_type || event.node || ""] || event.label || event.node;
+  if (event.terminal === false && event.node_type === "generate") return "Intermediate draft ready";
+  if (event.terminal === false && event.node_type === "need_upload") return "Evidence request prepared";
+  return completedNames[event.event] || event.label || event.event;
+}
 
 function ResearchTimeline({ events }: { events: Trace[] }) {
   return <ol className="timeline">{events.map((event, index) => <li key={index}>
@@ -23,7 +28,7 @@ function ResearchTimeline({ events }: { events: Trace[] }) {
     {event.decision && <p className="decision">{event.acceptance_reason === "third_attempt_confidence" ? "Passed third-attempt confidence threshold" : (event.accepted ?? event.decision === "sufficient") ? "Evidence is sufficient" : "Additional evidence needed"}</p>}
     {event.confidence !== undefined && <small>Validator confidence: {Number((event.confidence * 100).toFixed(2))}%</small>}
     {event.missing_evidence?.map((gap, i) => <p key={i}>{gap}</p>)}
-    {event.outcome && <p>{event.outcome === "answered" ? "Answer checked and ready" : "Insufficient evidence"}</p>}
+    {event.outcome && <p>{event.outcome === "answered" ? event.terminal === false ? "Draft available to later nodes" : "Answer checked and ready" : "Missing context"}</p>}
     {event.reason && <small>{event.reason.replaceAll("_", " ")}</small>}
   </li>)}</ol>;
 }

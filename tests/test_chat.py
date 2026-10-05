@@ -6,7 +6,7 @@ import httpx
 from groq import APITimeoutError, AuthenticationError, RateLimitError
 import pytest
 
-from conftest import completion
+from conftest import completion, answer_completion
 from rag_chat.chat import ChatError, MODEL, NO_EVIDENCE, answer_question
 from rag_chat.indexing import ingest
 
@@ -30,7 +30,7 @@ def needs_more(*gaps, confidence=0.2):
 
 
 def answered(text="The launch is in June. [1]"):
-    return completion(text)
+    return answer_completion(text)
 
 
 def retrieval_result(chunk_id, text):
@@ -152,13 +152,15 @@ def test_third_attempt_confidence_boundary_with_duplicate_results(client, confid
 
 
 def test_evidence_cap_does_not_skip_third_validation(client, monkeypatch):
-    monkeypatch.setattr("rag_chat.chat.MAX_EVIDENCE", 1)
+    from rag_chat.workflows import DEFAULT_WORKFLOW
+    workflow = DEFAULT_WORKFLOW.model_copy(deep=True)
+    workflow.nodes[1].config = {"max_evidence": 1}
     client.chat.completions.create.side_effect = [
         plan(), needs_more("standard agreement"), plan(), needs_more("standard agreement"),
         plan(), needs_more("standard agreement", confidence=0.5), answered(),
     ]
     library = mock_library(retrieval_result("same", "Launch in June"))
-    result = answer_question(library, "Compare agreements", [], client)
+    result = answer_question(library, "Compare agreements", [], client, workflow=workflow)
     assert result.text.endswith("[1]")
     assert library.collection.query.call_count == 1
     assert len([item for item in result.trace if item["event"] == "validate"]) == 3
@@ -230,7 +232,7 @@ def test_no_evidence_and_empty_library(manager, tokenizer, client):
 
 @pytest.mark.parametrize("text", ["Unsupported answer.", "Made up. [9]", "Mixed. [1] [8]", ""])
 def test_rejects_missing_or_invalid_citations(manager, tokenizer, client, text):
-    client.chat.completions.create.side_effect = [plan(), sufficient(), completion(text)]
+    client.chat.completions.create.side_effect = [plan(), sufficient(), answer_completion(text)]
     with pytest.raises(ChatError):
         answer_question(populated(manager, tokenizer), "When?", [], client)
 

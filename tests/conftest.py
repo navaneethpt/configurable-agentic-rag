@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -63,3 +64,7 @@ def client():
 
 def completion(text):
     return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
+
+
+def answer_completion(text="The launch is in June. [1]", status="answered"):
+    return completion(json.dumps({"status": status, "text": text}))

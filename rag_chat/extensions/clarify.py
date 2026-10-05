@@ -2,7 +2,8 @@
 
 from pydantic import Field
 
-from rag_chat.chat import Answer
+from rag_chat.agent_contracts import AgentOutput, Answer, NodeResult
+from rag_chat.agents.common import EvidenceRequestOutput
 from rag_chat.workflows import NodeConfig, NodeType, register_node
 
 
@@ -11,18 +12,22 @@ class ClarifyConfig(NodeConfig):
 
 
 def build_clarify(client, on_event, config):
-    def run(state):
-        question = config.get("question", "Which document should I use?")
-        if on_event:
-            on_event({"event": "clarify", "question": question})
-        return {"answer": Answer(question, [])}, None
+    def run(inputs):
+        question = config["question"]
+        return NodeResult(
+            AgentOutput("evidence_request", {"text": question, "missing_evidence": []}),
+            None if inputs.is_terminal else "next", Answer(question, []),
+        )
 
     return run
 
 
 register_node(NodeType(
     key="clarify", label="Ask for clarification", kind="agent",
-    description="Ask the user for a missing detail.", outputs=(),
+    description="Ask the user for a missing detail.", outputs=("next",),
     config_model=ClarifyConfig, factory=build_clarify,
-    provides=("answer",),
+    accepted_inputs=("question", "earlier outputs"),
+    output_kind="evidence_request", output_model=EvidenceRequestOutput,
+    missing_input_behavior="Ask for the missing document or detail.",
+    terminal_role="evidence_request",
 ))

@@ -74,7 +74,7 @@ export default function WorkflowBuilder({ open, session, activeId, onClose, onAc
     while (draft.nodes.some(node => node.id === id)) id = `${definition.type}_${++number}`;
     change(current => ({ ...current, nodes: [...current.nodes, {
       id, type: definition.type, config: {},
-      transitions: Object.fromEntries(definition.outputs.map(output => [output, ""])),
+      transitions: definition.terminal_role ? {} : Object.fromEntries(definition.outputs.map(output => [output, ""])),
     }] }));
     setSelectedNode(id);
     setAddType("");
@@ -204,7 +204,7 @@ export default function WorkflowBuilder({ open, session, activeId, onClose, onAc
                 value={draft.max_steps} onChange={event => change(current => ({ ...current, max_steps: Number(event.target.value) }))} /></label>
             </div>
             <p className="workflow-hint">{editingId ? "Save edits as a new version for future questions." : "The default is a starting point. Saving creates your own workflow and activates it for future questions."} Choose a node to edit its settings and connect each output. Loops are allowed within the step limit.</p>
-            <p className="workflow-hint">Your question and conversation history are passed to the selected start node. Additional required inputs must come from earlier nodes. With no uploaded documents, Folio responds immediately without running the workflow.</p>
+            <p className="workflow-hint">Every node receives your original question, conversation history, and all earlier outputs from the executed path. Missing context is handled by each agent. Upload a document before asking a question.</p>
             {(unreachable.length > 0 || unconnected.length > 0) && <div className="workflow-connectivity" role="status">
               {unreachable.length > 0 && <p><strong>Not connected to Start:</strong> {unreachable.join(", ")}. Select a node already on the path and set one of its Connections to the new node.</p>}
               {unconnected.length > 0 && <p><strong>Outputs needing a destination:</strong> {unconnected.join(", ")}.</p>}
@@ -225,18 +225,24 @@ export default function WorkflowBuilder({ open, session, activeId, onClose, onAc
                   <button aria-label={`Remove ${node.id}`} onClick={() => removeNode(node.id)} disabled={draft.nodes.length === 1}><Trash2 size={16} /></button></div>
                 <div className="workflow-id">Node ID: <code>{node.id}</code></div>
                 <section className="workflow-inputs" aria-label="Node inputs and outputs">
-                  <h4>Required inputs</h4>
-                  {nodeDefinition?.requires.length ? <ul>{nodeDefinition.requires.map(input => {
-                    const initial = nodeDefinition.initial_inputs.includes(input);
-                    const producers = catalog.filter(type => type.provides.includes(input));
-                    return <li key={input}><code>{input}</code> — {initial ? "Provided when the workflow starts" :
-                      producers.length ? `From an earlier node: ${producers.map(type => type.label).join(", ")}` : "Needs an earlier producer; none is registered"}</li>;
-                  })}</ul> : <p>No additional inputs required.</p>}
-                  <h4>Produced outputs</h4>
-                  <p>{nodeDefinition?.provides.length ? nodeDefinition.provides.join(", ") : "No state outputs declared."}</p>
+                  <h4>Accepted inputs</h4>
+                  <p>{nodeDefinition?.accepted_inputs.join(", ") || "Original question and earlier outputs"}</p>
+                  <h4>When inputs are missing</h4>
+                  <p>{nodeDefinition?.missing_input_behavior}</p>
+                  <h4>Produced output</h4>
+                  <p><code>{nodeDefinition?.output_kind}</code>{nodeDefinition?.output_schema.properties &&
+                    ` — ${Object.keys(nodeDefinition.output_schema.properties).join(", ")}`}</p>
                 </section>
                 {fields.length > 0 && <div className="workflow-fields"><h4>Settings</h4>{fields.map(([key, property]) => renderField(key, property))}</div>}
-                <div className="workflow-transitions"><h4>Connections</h4>{nodeDefinition?.outputs.length
+                <div className="workflow-transitions"><h4>Connections</h4>
+                  {nodeDefinition?.terminal_role && <label className="workflow-field"><span>After this node</span>
+                    <select aria-label={`${node.id} behavior`} value={Object.keys(node.transitions).length ? "continue" : "finish"}
+                      onChange={event => changeNode(node.id, current => ({ ...current, transitions: event.target.value === "finish" ? {} :
+                        Object.fromEntries(nodeDefinition.outputs.map(output => [output, current.transitions[output] || ""])) }))}>
+                      <option value="finish">Finish and respond to the user</option>
+                      {nodeDefinition.outputs.length > 0 && <option value="continue">Continue to another node</option>}
+                    </select></label>}
+                  {nodeDefinition?.outputs.length && (!nodeDefinition.terminal_role || Object.keys(node.transitions).length)
                   ? nodeDefinition.outputs.map(output => <label className="workflow-field" key={output}><span>{output.replaceAll("_", " ")} <ArrowRight size={13} /></span>
                     <select aria-label={`${node.id} ${output} target`} value={node.transitions[output] || ""}
                       onChange={event => changeNode(node.id, current => ({ ...current,

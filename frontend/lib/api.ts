@@ -1,6 +1,6 @@
 export type Source = { number: number; filename: string; location: string; text: string };
 export type Trace = {
-  event: string; node?: string; round?: number; query?: string; results?: number;
+  event: string; node?: string; node_type?: string; label?: string; step?: number; terminal?: boolean; output_kind?: string; round?: number; query?: string; results?: number;
   new_sources?: number; total_sources?: number; decision?: string; outcome?: string;
   reason?: string; missing_evidence?: string[];
   confidence?: number; accepted?: boolean; acceptance_reason?: string;

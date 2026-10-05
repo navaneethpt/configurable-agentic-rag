@@ -126,17 +126,17 @@ test("workflow builder saves and activates settings used by research", async ({ 
   await expect(builder).toContainText("Document retrieval");
   await expect(builder).toContainText("agent");
   await expect(builder).toContainText("tool");
-  await expect(builder).toContainText("Your question and conversation history are passed to the selected start node");
+  await expect(builder).toContainText("Every node receives your original question, conversation history, and all earlier outputs");
   const inputs = builder.getByRole("region", { name: "Node inputs and outputs" });
-  await expect(inputs).toContainText("question — Provided when the workflow starts");
-  await expect(inputs).toContainText("history — Provided when the workflow starts");
+  await expect(inputs).toContainText("question, history, validation, earlier outputs");
+  await expect(inputs).toContainText("Plan searches from the original question");
   await builder.locator(".workflow-node-card").nth(1).click();
-  await expect(inputs).toContainText("searches — From an earlier node: Search planner");
-  await expect(inputs).toContainText("evidence, new_evidence_count");
+  await expect(inputs).toContainText("Search with the original question when no search-query output is available.");
+  await expect(inputs).toContainText("passages — passages, searches, round");
   await builder.getByRole("textbox", { name: "Workflow name" }).fill("One pass research");
   await builder.getByRole("button", { name: /validate.*Evidence validator/i }).click();
-  await expect(inputs).toContainText("searches — From an earlier node: Search planner");
-  await expect(inputs).toContainText("validation, feedback, round_limit");
+  await expect(inputs).toContainText("Report insufficient evidence when no passages are available; queries are optional.");
+  await expect(inputs).toContainText("validation — decision, confidence, missing_evidence");
   await builder.getByLabel("Max Rounds").fill("1");
   await builder.getByLabel("Final Confidence").fill("0.9");
   await page.screenshot({ path: "test-results/workflow-builder.png", fullPage: true });
@@ -152,11 +152,12 @@ test("workflow builder saves and activates settings used by research", async ({ 
   await expect(page.locator(".active-workflow")).toContainText("One pass research · v1");
 });
 
-test("workflow save explains missing required inputs and their producers", async ({ page }) => {
-  await page.goto("/");
+test("retrieval and generation save and execute without planner or validator", async ({ page }) => {
+  await upload(page);
   await expect(page.getByLabel("Choose documents")).toBeEnabled();
   await page.getByRole("button", { name: "Configure agents" }).first().click();
   const builder = page.getByRole("dialog", { name: "Configure agents" });
+  await builder.getByRole("textbox", { name: "Workflow name" }).fill("Direct retrieval");
   await expect(builder.getByLabel("Start node")).toHaveValue("planner");
   await builder.getByRole("button", { name: "Remove planner", exact: true }).click();
   await builder.getByRole("button", { name: /validate.*Evidence validator/ }).click();
@@ -166,9 +167,59 @@ test("workflow save explains missing required inputs and their producers", async
   await builder.getByRole("button", { name: /retrieve.*Document retrieval/ }).click();
   await builder.getByLabel("retrieve next target").selectOption("generate");
   await builder.getByRole("button", { name: "Save new workflow and use" }).click();
-  await expect(builder.getByRole("alert")).toContainText("retrieve needs state from an earlier node: searches");
-  await expect(builder.getByRole("alert")).toContainText("Search planner (planner)");
-  await expect(builder.getByRole("alert")).toContainText("question is already available");
+  await expect(builder).toContainText("Saved version 1");
+  await builder.getByRole("button", { name: "Close workflow builder" }).click();
+  await ask(page, "When does Project Cedar launch?");
+  await expect(page.locator(".message.assistant")).toContainText("Project Cedar launches in June.");
+  await expect(page.getByRole("button", { name: "Source 1", exact: true })).toBeVisible();
+  await expect(page.locator(".right-panel")).not.toContainText("Search plan ready");
+  await expect(page.locator(".right-panel")).not.toContainText("Evidence checked");
+});
+
+test("generator alone asks for context without hidden retrieval", async ({ page }) => {
+  await upload(page);
+  await page.locator(".topbar").getByRole("button", { name: "Configure agents" }).click();
+  const builder = page.getByRole("dialog", { name: "Configure agents" });
+  await expect(builder.getByLabel("Start node")).toHaveValue("planner");
+  await builder.getByRole("button", { name: "Remove planner", exact: true }).click();
+  await builder.getByRole("button", { name: "Remove retrieve", exact: true }).click();
+  await builder.getByRole("button", { name: "Remove validate", exact: true }).click();
+  await builder.getByRole("button", { name: /need_upload.*Request more evidence/ }).click();
+  await builder.getByRole("button", { name: "Remove need_upload", exact: true }).click();
+  await expect(builder.getByLabel("Start node")).toHaveValue("generate");
+  await builder.getByRole("button", { name: "Save new workflow and use" }).click();
+  await expect(builder).toContainText("Saved version 1");
+  await builder.getByRole("button", { name: "Close workflow builder" }).click();
+  await ask(page, "When does Project Cedar launch?");
+  await expect(page.locator(".message.assistant")).toContainText("Please upload");
+  await expect(page.getByRole("button", { name: "Source 1", exact: true })).toHaveCount(0);
+  await expect(page.locator(".right-panel")).not.toContainText("Retrieval complete");
+});
+
+test("generator and evidence request can continue with only the terminal response shown", async ({ page }) => {
+  await upload(page);
+  await page.locator(".topbar").getByRole("button", { name: "Configure agents" }).click();
+  const builder = page.getByRole("dialog", { name: "Configure agents" });
+  await expect(builder.getByLabel("Start node")).toHaveValue("planner");
+  await builder.getByRole("button", { name: "Remove planner", exact: true }).click();
+  await builder.getByRole("button", { name: "Remove retrieve", exact: true }).click();
+  await builder.getByRole("button", { name: "Remove validate", exact: true }).click();
+  await builder.getByRole("button", { name: /generate.*Answer generator/ }).click();
+  await builder.getByLabel("generate behavior").selectOption("continue");
+  await builder.getByLabel("generate next target").selectOption("need_upload");
+  await builder.locator(".workflow-palette").getByRole("button", { name: /Answer generator/ }).click();
+  await builder.getByRole("button", { name: "Add selected node" }).click();
+  await builder.getByRole("button", { name: /need_upload.*Request more evidence/ }).click();
+  await builder.getByLabel("need_upload behavior").selectOption("continue");
+  await builder.getByLabel("need_upload next target").selectOption("generate_1");
+  await builder.getByRole("button", { name: "Save new workflow and use" }).click();
+  await expect(builder).toContainText("Saved version 1");
+  await builder.getByRole("button", { name: "Close workflow builder" }).click();
+  await ask(page, "When?");
+  await expect(page.locator(".message.assistant")).toHaveCount(1);
+  await expect(page.locator(".message.assistant")).toContainText("Please upload");
+  await expect(page.locator(".right-panel")).toContainText("Intermediate draft ready");
+  await expect(page.locator(".right-panel")).toContainText("Evidence request prepared");
 });
 
 test("workflow builder identifies disconnected nodes and guides their connections", async ({ page }) => {

@@ -46,7 +46,9 @@ def model():
             return completion(json.dumps({"decision": "needs_more_evidence" if missing else "sufficient",
                                           "confidence": 0.5 if partial else 0.2 if missing else 0.95,
                                           "missing_evidence": ["the annual budget document"] if missing else []}))
-        return completion("Project Cedar launches in June. [1]")
+        return completion(json.dumps({"status": "answered" if payload.get("excerpts") else "missing_context",
+                                     "text": "Project Cedar launches in June. [1]" if payload.get("excerpts")
+                                     else "Please upload the document or section that covers this question."}))
     client.chat.completions.create.side_effect = complete
     return client
 

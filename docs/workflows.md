@@ -1,146 +1,141 @@
 # Workflow authoring
 
-Folio executes the saved graph selected for each question. The server captures the
-workflow ID, version, and full definition before starting work, so editing a saved
-workflow cannot change an in-flight answer. The assistant message and operation
-snapshot record that version. Custom workflows are saved in SQLite under the current
-session ID. Other sessions cannot list, edit, delete, or run them. The built-in
-default template is available to every session. Because sessions live in memory,
-ending a session or restarting Python makes its saved workflows inaccessible, even
-though their database rows remain. Older shared custom workflows are retained but
-hidden because they cannot safely be assigned to a session.
+Folio executes the saved graph selected for each question. The server captures its
+ID, version, and definition before execution, so edits cannot change an in-flight
+answer. Workflows are saved in SQLite under the current session ID. Other sessions
+cannot list, edit, delete, or execute them. The default template is shared.
+Sessions live in memory: expiry or restarting Python makes their saved workflows
+inaccessible, although their database rows remain. No authentication is required.
 
-## Build in the UI
+## Compose agents in the UI
 
-Open **Configure agents** in the header. The catalog lists every registered agent and tool.
-Choose a saved workflow, or duplicate one to create a new version of the graph.
-Select a node card to edit its settings and choose a destination for every named
-output. Set the start node, name, and maximum number of node executions, then save.
-Saving activates the workflow for new questions in this browser tab. **Use selected**
-switches to an existing saved workflow in the same session without editing it.
+Open **Configure agents**, copy a workflow, and add or remove registered nodes.
+Choose a start node, connect every named routing outcome, and save. Saving activates
+that version for new questions in this browser tab. **Use selected** activates a
+previously saved version from the same session.
 
-The default graph contains these types:
+Every node receives the original `question`, bounded conversation `history`, and
+all earlier outputs along the executed path. Missing upstream outputs are handled
+by the node; saving does not require a planner or validator to precede another
+node. The inspector shows accepted inputs, missing-input behavior, and produced
+output fields. A healthy session with processed documents is still required to ask
+questions; the API rejects requests without an uploaded document.
 
-| Type | Kind | Outputs | Settings |
+Only an **Answer generator** or **Request more evidence** may finish a workflow.
+Their **After this node** control chooses whether to finish or continue. When they
+continue, their output is available to later nodes; their response is not committed
+to the conversation. Only the terminal response becomes the assistant message.
+
+| Node | Available inputs it uses | Output | Behavior without earlier outputs |
 |---|---|---|---|
-| `planner` | agent | `next` | Groq model, additional instructions, searches per round |
-| `retrieve` | tool | `next` | Results per search, total evidence cap |
-| `validate` | agent | `sufficient`, `retry`, `needs_upload` | Groq model, additional instructions, rounds, final confidence |
-| `generate` | agent | terminal | Groq model, additional instructions |
-| `need_upload` | agent | terminal | none |
+| Search planner | Question, history, feedback and earlier results | `search_queries` | Plan searches from the question |
+| Document retrieval | Search queries, question, earlier passages | `passages` with source metadata and queries used | Search with the original question |
+| Evidence validator | Question, passages and queries | `validation`, confidence and missing evidence | Report insufficient evidence when passages are absent |
+| Answer generator | Question, history, passages, optional validation and earlier results | `answer` with `answered` or `missing_context` status | Ask for the context needed to answer |
+| Request more evidence | Question and available evidence gaps | `evidence_request` | Request relevant documents |
 
-The server checks node types, primitive settings, every connection, reachability,
-paths to terminal nodes, and required state before saving. Cycles are allowed and
-stopped by `max_steps`. A terminal node must return an `Answer`. These checks
-prevent many wiring mistakes; an extension's Python handler can still fail at run
-time, in which case the chat stream reports an error without committing a reply.
+Examples after document upload:
 
-## Question and node dependencies
+- **Generator alone:** the LLM explains missing context; uploaded documents have not been retrieved automatically.
+- **Retrieval → Generator:** search directly using the question and generate a cited answer from passages, without a planner or validator.
+- **Planner → Generator:** plan searches, then explain missing context because no passages were retrieved.
+- **Validator → Generator:** identify insufficient evidence, then request missing context.
 
-For a healthy session with uploaded documents, every workflow's selected start
-node receives the user's question as `state["question"]`, along with the bounded
-conversation context in `state["history"]`. This applies to built-in and custom
-registered nodes. When no documents have been uploaded, Folio returns its immediate
-no-document response without running any workflow nodes.
+The server validates node types, settings, connections, reachability, a path to an
+eligible terminal, and execution limits. Sequential conditional routing and retry
+loops are supported; parallel branches are not executed. `max_steps` bounds loops.
+Nodes are never silently added. Operational failures, invalid results, and exhausted
+step limits produce errors without committing a partial assistant reply.
 
-The editor shows **Required inputs** and **Produced outputs** for the selected
-node. Inputs marked **Provided when the workflow starts** come from the shared
-initial-state contract. Other required inputs must be produced by an earlier node
-on every path to the selected node. Save errors identify missing inputs and the
-registered node types that produce them. These are state outputs, distinct from
-the named connections such as `next` and `retry`.
+## Results and grounding
 
-The question does not replace results from earlier agents. For example, retrieval
-requires `searches` from a search planner; the answer generator requires
-`validation` from an evidence validator. A `retrieve → generate` graph remains
-invalid without those results. To omit a node, remove it and reconnect the graph
-while preserving the required inputs of every remaining node. No searches or
-validation results are fabricated to fill missing dependencies.
+Each execution adds a result containing its node ID, type, step, and a tagged
+structured output. The payload can be an object or an array. Results remain ordered;
+repeating a node does not overwrite previous executions. Each handler receives a
+copy of earlier results, so modifying its input cannot rewrite prior output.
 
-## Add an agent or tool in Python
+Retrieval accumulates unique passages within the configured evidence cap. Research
+rounds count retrieval executions, including attempts that find no new passages.
+The default validator retries up to three rounds. Its final confidence threshold
+can permit a partial answer; generation must identify evidence gaps. A validation
+result predating a later retrieval is not applied to that newer evidence.
 
-Agent and tool code is trusted server code. A browser user can connect and configure
-registered types, but cannot submit Python or shell commands as a node. To add a
-type, create a module and register its metadata and factory. For example:
+Generators use passages as factual evidence. Generated drafts are not source
+material. Supported answers must cite available passage numbers. Missing-context
+responses contain no factual answer or citations. A citation identifies a passage;
+it does not independently prove every claim is correct.
+
+## Register an agent or tool
+
+Agents are trusted Python code registered on the server. Browser users can configure
+and connect registered types but cannot submit Python or shell commands. Built-ins
+use the same registry and contracts as extensions; the runner contains no built-in
+agent dispatch logic.
 
 ```python
 # rag_chat/extensions/clarify.py
 from pydantic import Field
-
-from rag_chat.chat import Answer
+from rag_chat.agent_contracts import AgentOutput, Answer, NodeResult
+from rag_chat.agents.common import EvidenceRequestOutput
 from rag_chat.workflows import NodeConfig, NodeType, register_node
 
-
 class ClarifyConfig(NodeConfig):
-    question: str = Field(default="Which document should I use?", min_length=1)
-
+    request: str = Field(default="Please upload the relevant contract.", min_length=1)
 
 def build_clarify(client, on_event, config):
-    def run(state):
-        question = config.get("question", "Which document should I use?")
-        if on_event:
-            on_event({"event": "clarify", "question": question})
-        return {"answer": Answer(question, [])}, None
-
+    def run(inputs):
+        # inputs.question, inputs.history, inputs.prior_results are always available.
+        # inputs.services.library is the session library, not an LLM input.
+        text = config["request"]
+        return NodeResult(
+            output=AgentOutput("evidence_request", {"text": text, "missing_evidence": []}),
+            route=None if inputs.is_terminal else "next",
+            response=Answer(text, []),
+        )
     return run
 
-
 register_node(NodeType(
-    key="clarify", label="Ask for clarification", kind="agent",
-    description="Ask the user for a missing detail.", outputs=(),
+    key="clarify", label="Request contract", kind="agent",
+    description="Request the contract needed for this task.", outputs=("next",),
     config_model=ClarifyConfig, factory=build_clarify,
-    provides=("answer",),
+    accepted_inputs=("question", "earlier outputs"),
+    output_kind="evidence_request", output_model=EvidenceRequestOutput,
+    missing_input_behavior="Request the relevant contract.",
+    terminal_role="evidence_request",
 ))
 ```
 
-Set `FOLIO_NODE_MODULES=rag_chat.extensions.clarify` in `.env`, restart the
-single-worker backend, and reopen the builder. The new type and its editable
-`question` field come from `/api/node-types`; no frontend code change is needed.
-The module name must be importable by Python. Multiple modules can be separated
-by commas.
+Set `FOLIO_NODE_MODULES=rag_chat.extensions.clarify`, restart the backend, and reopen
+the builder. Multiple importable modules can be separated by commas. Registered
+nodes and flat primitive configuration fields appear automatically.
 
-A factory receives the request's Groq client, an optional event callback, and the
-validated settings dictionary. It returns a handler that receives graph state and
-returns `(state_updates, output_name)`. Use `None` for terminal nodes. Declare
-`requires` for state keys the handler reads and `provides` for keys it writes.
-The shared initial state contains `library`, `question`, `history`, `round`,
-`feedback`, `evidence`, `trace`, `steps`, and `route`. Validation and execution use
-the same contract, also exposed as `initial_inputs` in each catalog entry. Empty
-evidence and feedback lists, round and step counters at zero, and an empty route
-are initialization values rather than results from an earlier agent.
-The default agents add `searches`, `validation`, and
-`answer` as they run. Settings must be flat strings, integers, numbers, or booleans
-so the generic UI can render them.
+Factory arguments remain `(client, on_event, config)`. **The handler contract has
+changed:** extensions must accept `NodeInput` and return `NodeResult`, replacing the
+old shared-state dictionary and `(state_updates, output_name)` tuple. Existing
+extensions must be updated before use. `requires`/`provides` declarations are
+replaced by accepted inputs and output schemas; accepted inputs do not create
+save-time dependencies.
 
-Existing saved workflows that reference an extension need that module loaded when
-they run. The default workflow remains available if the extension is removed.
+`NodeInput` contains `question`, `history`, `prior_results`, `services`, `node_id`,
+`step`, and `is_terminal`. `NodeExecution` contains `node_id`, `node_type`, `step`,
+and `output`. An `AgentOutput` contains `kind` and object-or-array `data`.
+`NodeResult` contains the output, route, optional response, and optional trace details.
+Use a Pydantic model or `TypeAdapter` for `output_model`; the runner validates the
+payload before recording it. Reuse the standard output schemas when producing
+queries, passages, validation, answers, or evidence requests consumed by built-ins.
+Only nodes declared as generators or evidence requests may end a workflow; terminal
+handlers must return an `Answer` and `route=None`. Continuing handlers choose a
+registered routing outcome. Any `response` from a continuing handler is ignored.
 
-## API shape
+## API and compatibility
 
-`GET /api/node-types` returns the catalog and JSON schemas, including `requires`,
-`provides`, and the additive `initial_inputs` field. Saved graph schemas and
-extension handler signatures are unchanged. Every workflow endpoint
-requires the current `X-Session-ID` header; `GET /api/workflows` returns only that
-session's saved definitions and the default template. A new workflow is posted to
-`/api/workflows` as:
+`GET /api/node-types` exposes configuration schemas, accepted inputs, common input
+schema, output kind/schema, missing-input behavior, routing outcomes, and terminal
+role. Session-owned workflow endpoints still require `X-Session-ID`.
 
-```json
-{
-  "name": "One-pass research",
-  "entry": "planner",
-  "max_steps": 20,
-  "nodes": [
-    {"id": "planner", "type": "planner", "config": {}, "transitions": {"next": "retrieve"}},
-    {"id": "retrieve", "type": "retrieve", "config": {}, "transitions": {"next": "validate"}},
-    {"id": "validate", "type": "validate", "config": {"max_rounds": 1},
-     "transitions": {"sufficient": "generate", "retry": "planner", "needs_upload": "need_upload"}},
-    {"id": "generate", "type": "generate", "config": {}, "transitions": {}},
-    {"id": "need_upload", "type": "need_upload", "config": {}, "transitions": {}}
-  ]
-}
-```
-
-`PUT /api/workflows/{id}` takes `{ "version": 1, "workflow": { ... } }`.
-A stale version returns 409. Chat requests include the saved ID:
-`{ "question": "When is launch?", "workflow_id": "..." }`.
-The built-in `default` workflow can be copied but not edited or deleted.
+The saved graph shape is unchanged: `name`, `entry`, `max_steps`, and `nodes` with
+`id`, `type`, `config`, and `transitions`. A terminal generator or evidence request
+uses empty transitions; to continue, use `{"next": "target_id"}`. The default graph
+and existing built-in workflows need no database migration. Custom workflows still
+need referenced extensions loaded. Stale updates return 409. Chat requests select
+`{"question": "When is launch?", "workflow_id": "..."}`.

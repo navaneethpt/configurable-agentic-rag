@@ -89,6 +89,12 @@ Select **Configure agents** in the header or banner to build a workflow. Choose 
 copy the default, add agent and tool nodes from the server catalog, set each node's
 settings, and connect its named outputs to other nodes. Choose a start node and
 save. Saving also activates the workflow for new questions in this browser tab.
+Each node receives the original question and all earlier outputs from its executed
+path. Nodes handle missing context independently: a generator alone asks for
+context, while retrieval followed by generation searches directly with the question
+and produces a cited answer. Planner and validator are optional. Answer generators
+and Request more evidence can finish a workflow or continue to another node;
+only the terminal response is shown to the user. A document upload is still required.
 The active workflow and version appear above the chat. Earlier answers retain the
 workflow name and version used when they ran. See [Workflow authoring](docs/workflows.md)
 for the graph contract and how to add a new Python agent or tool.
