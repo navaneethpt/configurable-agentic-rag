@@ -1,8 +1,9 @@
 # Folio · Configurable agentic document research
 
 A local POC with a Next.js/TypeScript research workspace and a single-worker
-FastAPI backend. LangGraph plans searches, retrieves from a temporary Chroma
-library, checks the evidence, and generates a cited answer using Groq.
+FastAPI backend. Independently registered agents and tools run in the workflow
+you configure. The default LangGraph workflow plans searches, retrieves from a
+temporary Chroma library, checks evidence, and generates a cited answer using Groq.
 
 ## Setup and run
 
@@ -76,9 +77,10 @@ anyone with the URL, which can consume the configured Groq API key.
 
 1. Choose or drop PDF, DOCX, TXT, or Markdown files and select **Process documents**.
 2. Wait for the per-file result. A bad file does not prevent later files processing.
-3. Ask a question. The Research panel shows live planning, individual searches,
-   evidence checks, and follow-up research.
-4. A complete answer appears after citation validation. Click a numbered citation
+3. Ask a question. The Research panel shows the nodes your selected workflow runs,
+   including intermediate drafts, searches, and evidence checks when configured.
+4. The terminal node's answer or context request appears in the conversation.
+   Supported answers must pass citation checks. Click a numbered citation
    to inspect its exact source passage; **View research** opens an earlier answer's trace.
 5. Clear session removes both documents and the conversation. On a narrow screen,
    use the document and research buttons in the header to open the drawers.
@@ -115,6 +117,37 @@ closed after it is read. Extracted text and vectors stay in memory.
 
 ## Agent and session behavior
 
+### Each agent works independently
+
+Every node receives the original question, recent conversation, and ordered outputs
+from earlier steps on the executed path. Each produces its own structured output
+and selects a routing outcome separately. Missing upstream results do not prevent
+saving a workflow; each agent handles the available inputs when it runs.
+
+| Agent or tool | Individual function | When earlier results are missing |
+|---|---|---|
+| Search planner | Produce focused queries from the question and relevant prior context | Plan from the question and conversation |
+| Document retrieval | Search the session vector library and return deduplicated passages, source metadata, and queries used | Search directly with the original question if no plan exists |
+| Evidence validator | Assess available passages against the question and queries; return sufficiency, confidence, and evidence gaps | Report insufficient evidence if no passages exist |
+| Answer generator | Produce a cited answer from supporting passages, or a structured context request | Validation is optional; without supporting context, ask for what is needed |
+| Request more evidence | Describe missing evidence or request relevant documents | Make a general request if no evidence gaps were supplied |
+
+For example, **Generator alone** requests context; it does not search uploaded
+documents automatically. **Retrieval → Generator** searches with the question and
+answers from passages without a planner or validator. **Planner → Generator** and
+**Validator → Generator** can run, but request context because neither retrieves
+passages. Document upload is required for all these workflows.
+
+Generators and evidence requests can finish or continue. Intermediate outputs are
+available to later nodes, but only the terminal response becomes the assistant
+message. Generated drafts are not document evidence. Results retain node IDs,
+types, and execution steps, so repeated nodes do not overwrite earlier results.
+Validation from before a later retrieval is not used to validate that newer evidence.
+The runner executes exactly the saved graph, with sequential routing and bounded
+retry loops. It does not insert missing agents.
+
+### The default configuration
+
 The saved default graph is `planner → retrieve → validate → generate`, with a
 feedback edge from validation to planning and a missing-evidence exit. Its defaults
 allow 3 rounds, 3 searches per round, 3 hits per search, and 10 unique chunks.
@@ -144,9 +177,10 @@ flowchart LR
     G -->|Grounded answer with\nchecked citations| A[Final answer]
 ```
 
-The planner and validator only propose and assess work. The retriever is deterministic:
-it can search only the current browser session's Chroma collection, and the generator
-receives only the accumulated evidence that passed the graph's routing checks.
+In this default configuration, the planner proposes searches, the deterministic
+retriever searches only the current session's Chroma collection, and the validator
+routes to generation, another search, or an evidence request. These connections
+are editable; other workflows can invoke each agent independently.
 
 Structured replies are validated with Pydantic and get one repair attempt. By
 default, the first two validation attempts require a `sufficient` decision. On the
@@ -157,7 +191,8 @@ Duplicate retrievals or a full 10-chunk evidence set do not prevent the third
 validation attempt; the full set is reused when no further chunks can be added.
 An empty evidence set never passes. Research shows confidence and threshold
 acceptance, and the generator must identify unresolved gaps in a fallback answer.
-Numbered citations are checked for valid references; this does not prove
+The generator makes one correction attempt if citation checks fail and rejects an
+invalid corrected response. Numbered citations are checked for valid references; this does not prove
 every generated claim is correct.
 
 Each browser tab keeps an opaque session ID in `sessionStorage`. Python owns the
@@ -170,20 +205,21 @@ Disconnecting does not cancel an accepted operation. Research completes in Pytho
 the browser reads session status and polls active work to recover the result.
 It never automatically resubmits a question. Traces show observable actions and
 explicit agent outputs, not private model reasoning. Workflow definitions are
-saved in SQLite and shared by anyone with access to this local server; document
-libraries and chats remain temporary and isolated by session ID. There is no
-authentication, multi-tenancy, or external tracing configuration. This is a local
-development POC, not a publicly hosted service.
+saved in SQLite and owned by the session that created them; other sessions cannot
+list, edit, delete, or run those workflows. The default template is shared.
+Document libraries and chats remain temporary and isolated by session ID. There
+is no authentication or external tracing configuration. Session IDs provide
+isolation within this POC; sessions remain temporary when hosted on Render.
 
 ## API
 
-Session and document requests include `X-Session-ID`. Workflow definitions and the
-node catalog are server-wide and do not require a session header.
+Session, document, chat, and workflow requests include `X-Session-ID`, except when
+creating a session. The node catalog is server-wide and requires no session header.
 
 | Method/path | Purpose |
 |---|---|
 | `GET /api/health` | Availability and answering configuration |
-| `GET /api/node-types` | Registered agent/tool metadata and setting schemas |
+| `GET /api/node-types` | Registered agents/tools, accepted inputs, output and setting schemas, routing outcomes, and terminal capability |
 | `GET /api/workflows` | List saved definitions and versions |
 | `GET /api/workflows/{id}` | Read one saved definition |
 | `POST /api/workflows` | Validate and save a new definition |

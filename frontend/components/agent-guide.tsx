@@ -65,10 +65,18 @@ export default function AgentGuide() {
     <div className="guide-content">
       <section className="guide-hero"><span className="eyebrow">CONFIGURABLE DOCUMENT RESEARCH</span>
         <h1>How Folio’s agents work together</h1>
-        <p>Your documents become a temporary searchable library. A workflow saved in this session decides which agents and tools run, how they connect, and when there is enough evidence to answer.</p>
+        <p>Each agent has its own function and handles the inputs available to it. Configure which agents and tools run, how they connect, and which one returns the final response. Your documents form a temporary searchable library.</p>
         <div className="guide-hero-actions"><a className="guide-primary" href="/?configure=agents"><Settings2 size={16} /> Configure agents for your task</a>
           <a className="guide-secondary" href="/">Ask your documents <ArrowRight size={15} /></a></div>
         {activeFlow && <p className="guide-active"><CheckCircle2 size={15} /> Currently selected in this tab: <strong>{activeFlow.name} · version {activeFlow.version}</strong></p>}
+      </section>
+
+      <section className="guide-section" aria-labelledby="independent-agents-title">
+        <span className="eyebrow">INDEPENDENT AGENTS</span><h2 id="independent-agents-title">Each agent works independently</h2>
+        <p>Every node receives your original question, recent conversation, and the ordered outputs of earlier steps on the executed path. It produces its own structured result and chooses a routing outcome. Missing earlier results are handled when the agent runs; no planner or validator is required before another agent.</p>
+        <p><strong>Generator alone:</strong> asks for missing context; it does not automatically search uploaded documents. <strong>Retrieval → Generator:</strong> searches directly with your question, then writes from supporting passages without a planner or validator.</p>
+        <p><strong>Planner → Generator:</strong> creates search queries, then asks for context because no passages were retrieved. <strong>Validator → Generator:</strong> reports insufficient evidence, then requests context. Upload a document before running any workflow.</p>
+        <p>Answer generator and Request more evidence can finish or continue. Intermediate drafts and requests go to later nodes; only the terminal response becomes the assistant message. Drafts are not document evidence, and validation from before a later retrieval does not validate the newer evidence. Repeated nodes keep separate results. Folio executes exactly your saved graph, sequentially, with bounded retry loops.</p>
       </section>
 
       <section className="guide-section" aria-labelledby="default-flow-title">
