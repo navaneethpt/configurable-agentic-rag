@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: "10000"
+      FOLIO_WORKFLOWS_DB: /app/.data/workflows.sqlite3
+    ports:
+      - "127.0.0.1:8000:10000"
+    volumes:
+      - folio-data:/app/.data
+
+volumes:
+  folio-data:
