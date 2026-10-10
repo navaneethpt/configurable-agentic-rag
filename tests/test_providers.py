@@ -14,7 +14,7 @@ from rag_chat.agents.common import GenerationOutput
 from rag_chat.chat import answer_question
 from rag_chat.indexing import ingest
 from rag_chat.model_client import _structured
-from rag_chat.providers import (DEFAULT_MODEL, GEMINI_MODEL, GROQ_MODEL, GeminiClient,
+from rag_chat.providers import (DEFAULT_MODEL, GEMINI_MODEL, GROQ_MODEL, OPENROUTER_MODEL, GeminiClient,
                                 GroqClient, create_model_client, provider_settings)
 from rag_chat.workflows import DEFAULT_WORKFLOW, WorkflowDraft, WorkflowNode
 
@@ -25,8 +25,10 @@ def gemini_response(text, reason=types.FinishReason.STOP):
 
 
 @pytest.mark.parametrize("env,provider,model,key,error", [
-    ({"GEMINI_API_KEY": " gemini-secret "}, "gemini", GEMINI_MODEL, "gemini-secret", None),
-    ({"GROQ_API_KEY": "other-provider-secret"}, "gemini", GEMINI_MODEL, "", "GEMINI_API_KEY"),
+    ({"OPENROUTER_API_KEY": " openrouter-secret "}, "openrouter", OPENROUTER_MODEL, "openrouter-secret", None),
+    ({"GROQ_API_KEY": "other-provider-secret", "GEMINI_API_KEY": "other-secret"},
+     "openrouter", OPENROUTER_MODEL, "", "OPENROUTER_API_KEY"),
+    ({"LLM_PROVIDER": "gemini", "GEMINI_API_KEY": " gemini-secret "}, "gemini", GEMINI_MODEL, "gemini-secret", None),
     ({"LLM_PROVIDER": "groq", "GROQ_API_KEY": " groq-secret "}, "groq", GROQ_MODEL, "groq-secret", None),
     ({"LLM_PROVIDER": " Gemini ", "GEMINI_API_KEY": "gemini-secret", "LLM_MODEL": " gemini-custom "},
      "gemini", "gemini-custom", "gemini-secret", None),
@@ -35,7 +37,7 @@ def gemini_response(text, reason=types.FinishReason.STOP):
     ({"LLM_PROVIDER": "private-secret"}, None, None, "", "LLM_PROVIDER"),
     ({"LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "key", "LLM_MODEL": "llama-model"},
      "gemini", "llama-model", "key", "LLM_MODEL"),
-    ({"LLM_MODEL": "x" * 101}, "gemini", "x" * 101, "", "100 characters"),
+    ({"LLM_MODEL": "x" * 101}, "openrouter", "x" * 101, "", "100 characters"),
 ])
 def test_settings(env, provider, model, key, error):
     settings = provider_settings(env)

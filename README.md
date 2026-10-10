@@ -3,7 +3,7 @@
 A local POC with a Next.js/TypeScript research workspace and a single-worker
 FastAPI backend. Independently registered agents and tools run in the workflow
 you configure. The default LangGraph workflow plans searches, retrieves from a
-temporary Chroma library, checks evidence, and generates a cited answer using Groq or Google Gemini.
+temporary Chroma library, checks evidence, and generates a cited answer using Groq, Google Gemini, or OpenRouter.
 
 ## Setup and run
 
@@ -47,8 +47,18 @@ sessions because they have no owner.
 
 ## Model providers
 
-Select one provider for the entire application. Gemini is the default when
-`LLM_PROVIDER` is unset, using `gemini-3.8-flash`. For a
+Select one provider for the entire application. OpenRouter is the default when
+`LLM_PROVIDER` is unset, using `liquid/lfm-2.5-2.6b:free` when `LLM_MODEL` is unset
+or blank. Only `OPENROUTER_API_KEY` is required for this default configuration:
+
+```dotenv
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_openrouter_key
+# Optional; default is liquid/lfm-2.5-2.6b:free:
+# LLM_MODEL=liquid/lfm-2.5-2.6b:free
+```
+
+To use Gemini, select it explicitly with a
 [Google AI Studio API key](https://aistudio.google.com/apikey):
 
 ```dotenv
@@ -67,14 +77,23 @@ GROQ_API_KEY=your_groq_key
 # LLM_MODEL=openai/gpt-oss-20b
 ```
 
-Only the selected provider's key is required and used; setting both keys does not
+To override the OpenRouter default, set `LLM_MODEL` to another OpenRouter model ID whose endpoints support
+[native JSON-schema structured outputs](https://openrouter.ai/docs/guides/features/structured-outputs).
+Agent overrides use other OpenRouter
+model IDs; the app does not look up or silently replace them. OpenRouter handles
+endpoint routing for the supplied model. Each structured call sets
+`response_format.type=json_schema`, `strict=true`, and `provider.require_parameters=true`.
+If no compatible endpoint exists, the request fails clearly; schemas are never
+dropped to make a request succeed.
+
+Only the selected provider's key is required and used; setting multiple keys does not
 enable automatic fallback. `LLM_PROVIDER` ignores case and surrounding whitespace.
 Shell/deployment environment variables override `.env`. Settings are read once at
 startup, so restart the backend after changes. Compose already loads `.env`;
 use `docker compose up -d --build --force-recreate` after changing it. On Railway
 or Render, set the same variables in the service environment and redeploy/restart.
 
-An agent model of `default` follows `LLM_MODEL`, or the provider's built-in default.
+An agent model of `default` follows `LLM_MODEL`, or the selected provider's built-in default.
 Each agent can override it with a model ID from the selected provider. Older saved
 `openai/gpt-oss-20b` settings are treated as the `default` alias, with no workflow
 or database migration. Other explicit overrides are preserved; update them when
@@ -84,9 +103,20 @@ being silently replaced. Provider selection is server-wide, not per workflow.
 Gemini uses the official `google-genai` SDK, native JSON schemas, and local
 Pydantic validation. The default Gemini model uses low thinking and a 4,096-token
 structured-response limit (including thinking); Groq retains its 768-token limit.
-Both clients use 45-second request timeouts and at most one transient transport
-retry. A malformed structured response may receive one additional repair call;
-answer citation correction is still enforced. These bounds apply to individual
+OpenRouter uses `httpx`, non-streaming responses, and a 4,096-token structured
+response budget. Its strict schema copy requires all declared object properties,
+disallows additional properties, and removes advisory defaults, preserving the
+original Pydantic schema and local validation.
+All clients use 45-second request timeouts and at most one transient transport
+retry. OpenRouter retries connectivity failures and HTTP 408/429/5xx once,
+honoring valid `Retry-After` delays up to 60 seconds; a longer delay produces an
+error asking you to wait. Missing/invalid retry headers use a one-second delay.
+[Errors embedded in HTTP 200 responses](https://openrouter.ai/docs/api_reference/errors-and-debugging)
+are checked and never replayed. Authentication, insufficient credits, quota,
+unsupported models/schema, refusals, and malformed responses return safe errors.
+A malformed structured response may receive one additional repair call with the
+same schema, including native settings for Gemini/OpenRouter; answer citation
+correction is still enforced. These bounds apply to individual
 requests, not the entire multi-step workflow. Quota, authentication, blocked,
 empty, and truncated responses produce safe provider-specific errors.
 
@@ -113,9 +143,13 @@ Use these settings:
 | Health Check Path | `/api/health` |
 | Instances | One; session libraries live in process memory |
 
-In **Environment**, add `GEMINI_API_KEY` from Google AI Studio as a secret
-(Gemini is the default), or set `LLM_PROVIDER=groq` and add `GROQ_API_KEY`.
-Optionally set `LLM_MODEL` to override the provider default. Do not add keys to the
+In **Environment**, add `OPENROUTER_API_KEY` as a secret. OpenRouter is the default,
+using `liquid/lfm-2.5-2.6b:free`; optionally override `LLM_MODEL` with another model
+supporting native JSON schemas. To use Gemini, set `LLM_PROVIDER=gemini` and add
+`GEMINI_API_KEY` from Google AI Studio; for Groq, set `LLM_PROVIDER=groq` and add
+`GROQ_API_KEY`. `LLM_MODEL` is optional for all three providers.
+The same variables apply to Railway, OCI, or a local Compose deployment.
+Do not add keys to the
 Dockerfile or commit `.env`. Render supplies `PORT`; the Docker command listens on
 `0.0.0.0:$PORT` with one worker. After deployment, open the service URL and check
 `/api/health` for `"answering_configured": true` before uploading a small document
@@ -166,7 +200,7 @@ roll back the document; rollback failure requires clearing the session.
 The initial upload downloads the local MiniLM ONNX embedding model (about 80 MB).
 Later sessions reuse its cache. Uploads work without a provider key; answering requires
 a key and connectivity. Questions, bounded recent conversation, and retrieved
-excerpts are sent to the selected provider (Groq or Gemini). Original files are not retained after processing;
+excerpts are sent to the selected provider (Groq, Gemini, or OpenRouter). Original files are not retained after processing;
 multipart parsing may temporarily spool an upload to a temporary file, which is
 closed after it is read. Extracted text and vectors stay in memory.
 
@@ -317,7 +351,7 @@ could not bind its helper port in this environment.
 
 Browser tests first build the static export, then launch a test-only FastAPI server
 on 8100. That server serves the same export together with real in-memory Chroma,
-deterministic embeddings, and mocked Groq/Gemini output. They exercise uploads, citations,
+deterministic embeddings, and mocked Groq/Gemini/OpenRouter output. They exercise uploads, citations,
 evidence gaps, workflow editing and execution, refresh/disconnect recovery, expiry,
 clearing, and mobile drawers.
 Screenshots are written under `frontend/test-results`. The test server's expiry

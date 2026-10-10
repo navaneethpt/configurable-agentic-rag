@@ -23,11 +23,30 @@ test("Gemini configuration warning preserves uploads and the guide explains mode
   await expect(page.locator("main > .alert")).not.toContainText("Set GROQ_API_KEY");
   await expect(page.getByRole("button", { name: "Send question" })).toBeDisabled();
   await page.getByRole("link", { name: "How the agents work" }).click();
-  const section = page.getByRole("region", { name: "Groq or Google Gemini" });
+  const section = page.getByRole("region", { name: "Gemini, Groq, or OpenRouter" });
   await expect(section).toContainText("LLM_PROVIDER=gemini");
   await expect(section).toContainText("default");
   await expect(section).toContainText("restarting the backend");
+  await expect(section).toContainText("LLM_PROVIDER=openrouter");
+  await expect(section).toContainText("OpenRouter is the default provider");
+  await expect(section).toContainText("liquid/lfm-2.5-2.6b:free");
+  await expect(section).toContainText("native JSON-schema");
 });
+
+for (const field of ["OPENROUTER_API_KEY", "LLM_MODEL"]) {
+  test(`OpenRouter ${field === "LLM_MODEL" ? "invalid" : "missing"} ${field} preserves uploads and disables chat`, async ({ page }) => {
+    const error = field === "LLM_MODEL" ? "Set LLM_MODEL to a valid model ID from the selected provider and restart the backend."
+      : "Set OPENROUTER_API_KEY in the backend environment or .env and restart the backend.";
+    await page.route("**/api/health", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
+      status: "ok", answering_configured: false, provider: "openrouter", default_model: field === "LLM_MODEL" ? "default" : "liquid/lfm-2.5-2.6b:free",
+      configuration_error: error,
+    }) }));
+    await upload(page);
+    await expect(page.locator("main > .alert")).toContainText(`Set ${field}`);
+    await expect(page.locator("main > .alert")).not.toContainText("Set GEMINI_API_KEY");
+    await expect(page.getByRole("button", { name: "Send question" })).toBeDisabled();
+  });
+}
 
 test("upload, cited answer, historical evidence, refresh and clear", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });

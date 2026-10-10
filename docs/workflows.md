@@ -115,8 +115,8 @@ Factory arguments remain `(client, on_event, config)`. The client is now a
 provider-neutral, context-managed `ModelClient`, rather than the raw Groq SDK.
 Use `client.complete(messages, model="default", max_tokens=1024, schema=None)`
 for text, or the shared `rag_chat.model_client._structured` helper for Pydantic
-outputs and bounded repair. `schema` is a JSON Schema dictionary; Gemini uses
-native structured output, while Groq retains the shared schema prompt. The
+outputs and bounded repair. `schema` is a JSON Schema dictionary; Gemini and
+OpenRouter use native structured output, while Groq retains the shared schema prompt. The
 client returns text and raises safe `ChatError` on provider failures. Extensions
 that used `client.chat.completions.create` must adopt this interface; the runner
 owns client cleanup. For example:
@@ -129,13 +129,27 @@ output = _structured(client, GenerationOutput, messages, "custom generator",
                      model=config.get("model", "default"))
 ```
 
-`LLM_PROVIDER` selects Groq or Gemini application-wide; Gemini is the default
-when unset, using `gemini-3.8-flash`. `LLM_MODEL` supplies
+`LLM_PROVIDER` selects Groq, Gemini, or OpenRouter application-wide; OpenRouter is the default
+when unset, using `liquid/lfm-2.5-2.6b:free`. `LLM_MODEL` optionally overrides
 the default; agents may override it with a model ID from that provider. The
 legacy `openai/gpt-oss-20b` value follows the selected default. Other overrides
 are preserved and must be updated when switching providers. No graph/database
 migration is needed. See [Model providers](../README.md#model-providers) for keys,
 timeouts, configuration errors, and deployment settings.
+
+For OpenRouter, `OPENROUTER_API_KEY` is required; an unset or blank `LLM_MODEL`
+uses the application default above. Explicit provider/model settings in the
+environment or `.env` take precedence over these defaults.
+Extensions using structured output must choose an OpenRouter model with native
+JSON-schema endpoint support. The adapter copies schemas for strict endpoints,
+requires declared object properties, disallows additional properties, and removes
+advisory defaults without changing the caller's schema. References and constraints
+are preserved. `_structured` uses a 4,096-token budget and retains the native
+schema during its single malformed-response repair. Unsupported endpoints fail;
+there is no schema-free or other-provider fallback. Direct extension calls can
+choose their own `max_tokens` budget. The HTTP client is closed by the context
+manager, including when execution fails; factory arguments and handler signatures
+remain unchanged.
 
 **The handler contract has
 changed:** extensions must accept `NodeInput` and return `NodeResult`, replacing the

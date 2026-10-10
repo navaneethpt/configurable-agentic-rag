@@ -80,8 +80,9 @@ export default function AgentGuide() {
       </section>
 
       <section className="guide-section" aria-labelledby="model-provider-title">
-        <span className="eyebrow">MODEL PROVIDER</span><h2 id="model-provider-title">Groq or Google Gemini</h2>
-        <p>Gemini is the default provider, using <code>gemini-3.8-flash</code> when no model override is configured. The server administrator selects one provider for all workflows using <code>LLM_PROVIDER=gemini</code> or <code>LLM_PROVIDER=groq</code>. Gemini uses a Google AI Studio key in <code>GEMINI_API_KEY</code>; Groq uses <code>GROQ_API_KEY</code>. Keys stay on the server.</p>
+        <span className="eyebrow">MODEL PROVIDER</span><h2 id="model-provider-title">Gemini, Groq, or OpenRouter</h2>
+        <p>OpenRouter is the default provider, using <code>liquid/lfm-2.5-2.6b:free</code> when no model override is configured. The server administrator selects one provider for all workflows using <code>LLM_PROVIDER=openrouter</code>, <code>LLM_PROVIDER=gemini</code>, or <code>LLM_PROVIDER=groq</code>. Gemini uses a Google AI Studio key in <code>GEMINI_API_KEY</code>; Groq uses <code>GROQ_API_KEY</code>. Keys stay on the server.</p>
+        <p>OpenRouter requires <code>OPENROUTER_API_KEY</code>; <code>LLM_MODEL</code> is optional and overrides its default model. Choose a model whose endpoints support native JSON-schema structured outputs. If a model or endpoint lacks that support, the agent returns an error. The app keeps the schema and uses the selected provider throughout the workflow.</p>
         <p>Set an agent’s model to <code>default</code> to use the server’s model, configured through <code>LLM_MODEL</code>. You can override individual agents with another model ID from the selected provider. Switching providers requires restarting the backend; explicit model overrides must match the new provider.</p>
         <p>Older saved model settings of <code>openai/gpt-oss-20b</code> follow the selected provider’s default for compatibility. Your workflow connections and the agents’ individual functions stay the same. Document search and embeddings run locally; questions, conversation, and retrieved excerpts go to the selected provider.</p>
       </section>

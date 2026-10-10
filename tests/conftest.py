@@ -75,5 +75,5 @@ def answer_completion(text="The launch is in June. [1]", status="answered"):
 def isolate_provider_environment(monkeypatch):
     # Do not read real credentials from the developer's .env during offline tests.
     for name, value in {"LLM_PROVIDER": "groq", "LLM_MODEL": "",
-                        "GROQ_API_KEY": "", "GEMINI_API_KEY": ""}.items():
+                        "GROQ_API_KEY": "", "GEMINI_API_KEY": "", "OPENROUTER_API_KEY": ""}.items():
         monkeypatch.setenv(name, value)
