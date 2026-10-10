@@ -2,7 +2,7 @@
 from typing import Literal
 from pydantic import BaseModel, Field
 from ..agent_contracts import NodeInput
-from ..model_client import MODEL
+from ..providers import DEFAULT_MODEL
 from ..workflows import NodeConfig
 
 NO_EVIDENCE = "I couldn't find enough information in your uploaded documents to answer that question."
@@ -14,7 +14,8 @@ MAX_EVIDENCE = 10
 
 
 class ModelConfig(NodeConfig):
-    model: str = Field(default=MODEL, min_length=1, max_length=100)
+    model: str = Field(default=DEFAULT_MODEL, min_length=1, max_length=100,
+        description="Use default for the server's configured model, or a model ID from its selected provider.")
     instructions: str = Field(default="", max_length=4000)
 
 

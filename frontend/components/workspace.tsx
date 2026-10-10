@@ -37,6 +37,7 @@ export default function Workspace() {
   const [session, setSession] = useState<string>();
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [configured, setConfigured] = useState(false);
+  const [configurationError, setConfigurationError] = useState<string | null>(null);
   const [activeWorkflow, setActiveWorkflow] = useState<SavedWorkflow>();
   const [workflowBuilderOpen, setWorkflowBuilderOpen] = useState(false);
   const [error, setError] = useState("");
@@ -83,9 +84,10 @@ export default function Workspace() {
     try {
       const id = await getSession();
       const [health, workflows] = await Promise.all([
-        api<{ answering_configured: boolean }>("/health"), api<SavedWorkflow[]>("/workflows", id),
+        api<{ answering_configured: boolean; configuration_error?: string | null }>("/health"), api<SavedWorkflow[]>("/workflows", id),
       ]);
       setConfigured(health.answering_configured);
+      setConfigurationError(health.configuration_error || null);
       const chosen = workflows.find(item => item.id === sessionStorage.getItem(WORKFLOW_KEY))
         || workflows.find(item => item.id === "default");
       setActiveWorkflow(chosen);
@@ -221,7 +223,7 @@ export default function Workspace() {
         <div className="agent-callout-actions"><a href="/agents/">How the agents work <ChevronRight size={14} /></a><button onClick={() => setWorkflowBuilderOpen(true)}>Configure agents</button></div>
       </section>
       {error && <div className="alert" role="alert">{error}<button onClick={expired ? reset : initialize} disabled={localBusy}>{expired ? "Start new session" : "Reconnect"}</button></div>}
-      {!loading && snapshot && !configured && <div className="alert">Answering is not configured. Set GROQ_API_KEY in the backend .env and restart. You can still upload documents.</div>}
+      {!loading && snapshot && !configured && <div className="alert">Answering is not configured. {configurationError || "Configure the selected model provider in the backend environment and restart."} You can still upload documents.</div>}
       {snapshot && !snapshot.healthy && <div className="alert">The document library needs to be cleared before continuing.</div>}
       <div className="conversation">
         {loading ? <div className="welcome"><LoaderCircle className="spin" /><p>Opening your workspace…</p></div> : !snapshot?.messages.length && !pending ? <div className="welcome"><div className="welcome-symbol"><BookOpen size={30} /></div><span className="eyebrow">LESS SEARCHING. MORE UNDERSTANDING.</span><h2>Your documents,<br /><em>a clearer picture.</em></h2><p>Bring your files. Ask a question. Follow the evidence<br className="desktop-break" /> as your research assistant connects the dots.</p><div className="suggestions">{["Summarize the key points", "Compare the agreements", "Find the important dates"].map(text => <button key={text} onClick={() => setQuestion(text)}><Search size={14} />{text}<ChevronRight size={14} /></button>)}</div><small><span className="step-badge">1</span> Add documents <span className="step-line" /> <span className="step-badge">2</span> Start a conversation</small></div> : snapshot?.messages.map(message => <article key={message.id} className={`message ${message.role}`}><div className="message-author">{message.role === "assistant" ? <><span className="mini-mark"><Layers size={13} /></span> Folio {message.workflow && <small>· {message.workflow.name} v{message.workflow.version}</small>}</> : "You"}</div><div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ href, children }) => href?.startsWith("#source-") ? <button className="citation" aria-label={`Source ${href.slice(8)}`} onClick={() => inspect(message, Number(href.slice(8)))}>{children}</button> : <a href={href} target="_blank" rel="noreferrer">{children}</a> }}>{message.content.replace(/\[(\d+)\]/g, (match, number) => message.sources.some(source => source.number === Number(number)) ? `[${number}](#source-${number})` : match)}</ReactMarkdown></div>{message.role === "assistant" && <button className="inspect-button" onClick={() => inspect(message)}><FlaskConical size={13} /> View research <span>· {message.sources.length} sources</span><ChevronRight size={12} /></button>}</article>)}

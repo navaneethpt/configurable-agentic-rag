@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from groq import Groq
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.datastructures import UploadFile
 
@@ -20,6 +19,7 @@ from .chat import ChatError, answer_question
 from .documents import DocumentError, MAX_FILE_BYTES
 from .indexing import ingest
 from .runtime import Runtime
+from .providers import create_model_client, provider_settings
 from .sessions import SessionBusy, SessionExpired
 from .workflows import (WorkflowConflict, WorkflowDraft, WorkflowError, WorkflowNotFound,
                         WorkflowStore, load_extensions, node_catalog, validate_workflow)
@@ -79,6 +79,7 @@ def create_app(runtime_factory=Runtime, client_factory=None, frontend_dir: Path 
     @asynccontextmanager
     async def lifespan(app):
         load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+        app.state.provider_settings = provider_settings()
         load_extensions()
         app.state.runtime = runtime_factory()
         database = workflow_db_path or Path(os.getenv(
@@ -135,11 +136,14 @@ def create_app(runtime_factory=Runtime, client_factory=None, frontend_dir: Path 
         return task
 
     def configured():
-        return client_factory is not None or bool(os.getenv("GROQ_API_KEY", "").strip())
+        return client_factory is not None or api.state.provider_settings.configuration_error is None
 
     @api.get("/api/health")
     def health():
-        return {"status": "ok", "answering_configured": configured()}
+        settings = api.state.provider_settings
+        return {"status": "ok", "answering_configured": configured(), "provider": settings.provider,
+                "default_model": settings.default_model,
+                "configuration_error": None if client_factory else settings.configuration_error}
 
     @api.get("/api/node-types")
     def catalog():
@@ -224,7 +228,7 @@ def create_app(runtime_factory=Runtime, client_factory=None, frontend_dir: Path 
         workflow = api.state.workflows.get(session_id, body.workflow_id)
         validate_workflow(workflow)
         if not configured():
-            raise HTTPException(503, "Set GROQ_API_KEY in the backend .env and restart the API.")
+            raise HTTPException(503, api.state.provider_settings.configuration_error)
         if not snapshot["healthy"]:
             raise HTTPException(409, "The document library needs to be cleared before continuing.")
         if not snapshot["documents"]:
@@ -251,8 +255,7 @@ def create_app(runtime_factory=Runtime, client_factory=None, frontend_dir: Path 
             messages = None
             result = None
             try:
-                factory = client_factory or (lambda: Groq(
-                    api_key=os.environ["GROQ_API_KEY"], timeout=45.0, max_retries=1))
+                factory = client_factory or (lambda: create_model_client(api.state.provider_settings))
                 with library.lock, factory() as client:
                     answer = answer_question(library, body.question, library.messages[-10:], client,
                                              on_event=progress, workflow=workflow)

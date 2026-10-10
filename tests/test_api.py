@@ -9,6 +9,7 @@ import pytest
 
 from conftest import completion, answer_completion
 from rag_chat.api import create_app
+from rag_chat.providers import GroqClient
 from rag_chat.chat import Answer, Source
 from rag_chat.workflows import DEFAULT_WORKFLOW, WorkflowDraft, WorkflowNode
 
@@ -23,7 +24,7 @@ def api_client(manager, tokenizer, tmp_path):
         completion(json.dumps({"decision": "sufficient", "confidence": 0.95, "missing_evidence": []})),
         answer_completion("The launch is in June. [1]"),
     ]
-    app = create_app(lambda: runtime, lambda: model, workflow_db_path=tmp_path / "workflows.sqlite3")
+    app = create_app(lambda: runtime, lambda: GroqClient(sdk=model), workflow_db_path=tmp_path / "workflows.sqlite3")
     with TestClient(app) as client:
         yield client, manager, model
 
@@ -203,12 +204,71 @@ def test_disconnect_finishes_and_recovers_result(api_client, monkeypatch):
 def test_missing_key_still_allows_uploads(manager, tokenizer, monkeypatch, tmp_path):
     runtime = SimpleNamespace(manager=manager, tokenizer=lambda: tokenizer)
     with TestClient(create_app(lambda: runtime, workflow_db_path=tmp_path / "workflows.sqlite3")) as client:
-        monkeypatch.delenv("GROQ_API_KEY", raising=False)
-        assert client.get("/api/health").json() == {"status": "ok", "answering_configured": False}
+        assert client.get("/api/health").json()["answering_configured"] is False
         headers = setup_session(client)
         assert client.post("/api/chat", headers=headers, json={"question": "When?"}).status_code == 503
         assert client.get("/api/session").status_code == 400
         assert client.post("/api/chat", headers=headers, json={"question": "   "}).status_code == 422
+
+
+@pytest.mark.parametrize("provider,key", [("gemini", "GEMINI_API_KEY"), ("groq", "GROQ_API_KEY"),
+                                          ("unknown", "LLM_PROVIDER")])
+def test_selected_configuration_errors_allow_uploads_but_never_start_chat(manager, tokenizer, monkeypatch, tmp_path, provider, key):
+    monkeypatch.setenv("LLM_PROVIDER", provider)
+    # A key for the other provider cannot satisfy the selected provider.
+    monkeypatch.setenv("GROQ_API_KEY" if provider == "gemini" else "GEMINI_API_KEY", "other-provider-secret")
+    runtime = SimpleNamespace(manager=manager, tokenizer=lambda: tokenizer)
+    with TestClient(create_app(lambda: runtime, workflow_db_path=tmp_path / "workflows.sqlite3")) as client:
+        health = client.get("/api/health").json()
+        assert health["status"] == "ok" and health["answering_configured"] is False
+        assert key in health["configuration_error"] and "secret" not in json.dumps(health)
+        headers = setup_session(client)
+        before = client.get("/api/session", headers=headers).json()["operation"]
+        rejected = client.post("/api/chat", headers=headers, json={"question": "When?"})
+        assert rejected.status_code == 503 and rejected.json()["detail"] == health["configuration_error"]
+        assert client.get("/api/session", headers=headers).json()["operation"] == before
+
+
+def test_provider_settings_are_frozen_until_restart(manager, tokenizer, monkeypatch, tmp_path):
+    monkeypatch.setenv("LLM_PROVIDER", " Gemini ")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-secret")
+    monkeypatch.setenv("LLM_MODEL", "gemini-custom")
+    runtime = SimpleNamespace(manager=manager, tokenizer=lambda: tokenizer)
+    with TestClient(create_app(lambda: runtime, workflow_db_path=tmp_path / "workflows.sqlite3")) as client:
+        health = client.get("/api/health").json()
+        assert health == {"status": "ok", "answering_configured": True, "provider": "gemini",
+                          "default_model": "gemini-custom", "configuration_error": None}
+        monkeypatch.setenv("LLM_PROVIDER", "groq")
+        monkeypatch.setenv("GEMINI_API_KEY", "")
+        assert client.get("/api/health").json() == health
+
+
+def test_api_uses_selected_adapter_and_preserves_completed_answer(manager, tokenizer, monkeypatch, tmp_path):
+    from unittest.mock import Mock
+    from google.genai import types
+    from rag_chat.providers import GeminiClient
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-secret")
+    sdk = Mock()
+    sdk.models.generate_content.side_effect = [types.GenerateContentResponse(candidates=[types.Candidate(
+        finish_reason="STOP", content=types.Content(role="model", parts=[types.Part(text=text)]))]) for text in [
+            json.dumps({"searches": [{"query": "launch", "purpose": "Find timing"}]}),
+            json.dumps({"decision": "sufficient", "confidence": 0.95, "missing_evidence": []}),
+            json.dumps({"status": "answered", "text": "Launch in June. [1]"}),
+        ]]
+    factory = Mock(return_value=GeminiClient(sdk=sdk))
+    monkeypatch.setattr("rag_chat.api.create_model_client", factory)
+    runtime = SimpleNamespace(manager=manager, tokenizer=lambda: tokenizer)
+    with TestClient(create_app(lambda: runtime, workflow_db_path=tmp_path / "workflows.sqlite3")) as client:
+        headers = setup_session(client)
+        response = client.post("/api/chat", headers=headers, json={"question": "When?"})
+        assert parse_events(response)[-1][0] == "answer"
+        state = client.get("/api/session", headers=headers).json()
+        assert state["operation"]["status"] == "complete"
+        assert state["messages"][-1]["content"] == "Launch in June. [1]"
+        assert state["messages"][-1]["sources"][0]["filename"] == "launch.txt"
+    assert factory.call_args.args[0].provider == "gemini"
+    sdk.close.assert_called_once()
 
 
 def test_static_export_and_api_routes_share_one_server(manager, tokenizer, tmp_path, monkeypatch):
@@ -225,7 +285,7 @@ def test_static_export_and_api_routes_share_one_server(manager, tokenizer, tmp_p
         page = client.get("/")
         assert page.status_code == 200 and "Folio workspace" in page.text
         assert client.get("/_next/static/app.js").text == "window.folio = true"
-        assert client.get("/api/health").json() == {"status": "ok", "answering_configured": False}
+        assert client.get("/api/health").json()["answering_configured"] is False
 
 
 def test_api_starts_without_a_static_export(manager, tokenizer, tmp_path, monkeypatch):

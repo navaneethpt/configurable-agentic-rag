@@ -13,6 +13,22 @@ async function ask(page: Page, question: string) {
   await page.getByRole("button", { name: "Send question" }).click();
 }
 
+test("Gemini configuration warning preserves uploads and the guide explains model selection", async ({ page }) => {
+  await page.route("**/api/health", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
+    status: "ok", answering_configured: false, provider: "gemini", default_model: "gemini-3.8-flash",
+    configuration_error: "Set GEMINI_API_KEY in the backend environment or .env and restart the backend.",
+  }) }));
+  await upload(page);
+  await expect(page.locator("main > .alert")).toContainText("Set GEMINI_API_KEY");
+  await expect(page.locator("main > .alert")).not.toContainText("Set GROQ_API_KEY");
+  await expect(page.getByRole("button", { name: "Send question" })).toBeDisabled();
+  await page.getByRole("link", { name: "How the agents work" }).click();
+  const section = page.getByRole("region", { name: "Groq or Google Gemini" });
+  await expect(section).toContainText("LLM_PROVIDER=gemini");
+  await expect(section).toContainText("default");
+  await expect(section).toContainText("restarting the backend");
+});
+
 test("upload, cited answer, historical evidence, refresh and clear", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await upload(page);
@@ -168,6 +184,7 @@ test("workflow builder saves and activates settings used by research", async ({ 
   await expect(builder).toContainText("agent");
   await expect(builder).toContainText("tool");
   await expect(builder).toContainText("Every node receives your original question, conversation history, and all earlier outputs");
+  await expect(builder.getByRole("textbox", { name: /^Model\b/ })).toHaveValue("default");
   const inputs = builder.getByRole("region", { name: "Node inputs and outputs" });
   await expect(inputs).toContainText("question, history, validation, earlier outputs");
   await expect(inputs).toContainText("Plan searches from the original question");

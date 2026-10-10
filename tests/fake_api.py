@@ -14,6 +14,7 @@ from tokenizers.pre_tokenizers import Whitespace
 
 from conftest import TestEmbedding, completion
 from rag_chat.api import create_app
+from rag_chat.providers import GroqClient
 from rag_chat.sessions import SessionManager
 
 clock = [0.0]
@@ -50,7 +51,7 @@ def model():
                                      "text": "Project Cedar launches in June. [1]" if payload.get("excerpts")
                                      else "Please upload the document or section that covers this question."}))
     client.chat.completions.create.side_effect = complete
-    return client
+    return GroqClient(sdk=client)
 
 
 workflow_directory = TemporaryDirectory(prefix="folio-browser-tests-")

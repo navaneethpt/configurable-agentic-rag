@@ -107,7 +107,7 @@ def test_independent_workflows_run_only_configured_nodes(client, start):
         "metadatas": [[{"filename": "launch.txt", "location": "Text"}]]}
     prefix = [completion(json.dumps({"searches": [{"query": "launch", "purpose": "Find date"}]}))] if start == "planner" else [
         completion(json.dumps({"decision": "sufficient", "confidence": 0.9}))] if start == "validate" else []
-    client.chat.completions.create.side_effect = [*prefix, answer_completion("Launch in June. [1]") if start == "retrieve"
+    client.sdk.chat.completions.create.side_effect = [*prefix, answer_completion("Launch in June. [1]") if start == "retrieve"
         else answer_completion("Please upload the release schedule.", "missing_context")]
     result = answer_question(SimpleNamespace(healthy=True, collection=collection), "When is launch?", [], client,
         workflow=short_workflow(start))
@@ -120,8 +120,8 @@ def test_independent_workflows_run_only_configured_nodes(client, start):
         collection.query.assert_not_called()
     if start == "validate":
         assert result.trace[0]["accepted"] is False and result.trace[0]["confidence"] == 0
-    assert client.chat.completions.create.call_count == len(prefix) + 1
-    payload = json.loads(client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
+    assert client.sdk.chat.completions.create.call_count == len(prefix) + 1
+    payload = json.loads(client.sdk.chat.completions.create.call_args.kwargs["messages"][1]["content"])
     assert payload["question"] == "When is launch?"
 
 
@@ -151,7 +151,7 @@ def test_custom_start_receives_original_context_and_empty_prior_results(client):
         library.collection.count.return_value = 0
         assert answer_question(library, "When?", history, client, workflow=workflow).text == NO_EVIDENCE
         assert len(received) == 1
-        client.chat.completions.create.assert_not_called()
+        client.sdk.chat.completions.create.assert_not_called()
     finally:
         unregister_node("context_answer")
 
@@ -162,14 +162,14 @@ def test_intermediate_results_are_retained_but_do_not_become_user_responses(clie
         WorkflowNode(id="need_upload", type="need_upload", transitions={"next": "final"}),
         WorkflowNode(id="final", type="generate"),
     ])
-    client.chat.completions.create.side_effect = [answer_completion("Draft context request", "missing_context"),
+    client.sdk.chat.completions.create.side_effect = [answer_completion("Draft context request", "missing_context"),
         answer_completion("Final context request", "missing_context")]
     library = SimpleNamespace(healthy=True, collection=Mock())
     library.collection.count.return_value = 1
     result = answer_question(library, "When?", [], client, workflow=workflow)
     assert result.text == "Final context request"
     assert [item["terminal"] for item in result.trace] == [False, False, True]
-    payload = json.loads(client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
+    payload = json.loads(client.sdk.chat.completions.create.call_args.kwargs["messages"][1]["content"])
     assert [item["node_id"] for item in payload["prior_outputs"]] == ["generate", "need_upload"]
     assert payload["excerpts"] == []  # Draft text cannot become document evidence.
     assert payload["prior_outputs"][0]["data"]["text"] == "Draft context request"
@@ -180,7 +180,7 @@ def test_intermediate_results_are_retained_but_do_not_become_user_responses(clie
 def test_generator_without_passages_rejects_fabricated_citations(client, status, text):
     library = SimpleNamespace(healthy=True, collection=Mock())
     library.collection.count.return_value = 1
-    client.chat.completions.create.side_effect = [answer_completion(text, status), answer_completion(text, status)]
+    client.sdk.chat.completions.create.side_effect = [answer_completion(text, status), answer_completion(text, status)]
     with pytest.raises(ChatError, match="source references"):
         answer_question(library, "When?", [], client, workflow=short_workflow())
     library.collection.query.assert_not_called()
@@ -193,13 +193,13 @@ def test_generator_repairs_missing_citations_once_using_available_passages(clien
         "ids": [["launch"]], "documents": [["Launch is in June."]],
         "metadatas": [[{"filename": "launch.txt", "location": "page 1"}]], "distances": [[0.1]],
     }
-    client.chat.completions.create.side_effect = [
+    client.sdk.chat.completions.create.side_effect = [
         answer_completion("Launch in June."), answer_completion("Launch in June. [1]"),
     ]
     result = answer_question(library, "When?", [], client, workflow=short_workflow("retrieve"))
     assert result.text == "Launch in June. [1]" and len(result.sources) == 1
-    assert client.chat.completions.create.call_count == 2
-    correction = json.loads(client.chat.completions.create.call_args.kwargs["messages"][-2]["content"])
+    assert client.sdk.chat.completions.create.call_count == 2
+    correction = json.loads(client.sdk.chat.completions.create.call_args.kwargs["messages"][-2]["content"])
     assert correction["available_source_numbers"] == [1]
     assert len(result.trace) == 2
 
@@ -242,12 +242,12 @@ def test_validator_retry_rounds_work_without_a_planner(client):
     collection.count.return_value = 1
     collection.query.return_value = {"ids": [["one"]], "documents": [["Launch in June."]],
         "metadatas": [[{"filename": "launch.txt", "location": "Text"}]]}
-    client.chat.completions.create.side_effect = [completion(json.dumps({"decision": "needs_more_evidence",
+    client.sdk.chat.completions.create.side_effect = [completion(json.dumps({"decision": "needs_more_evidence",
         "confidence": 0.2, "missing_evidence": ["the signed contract"]}))] * 3
     result = answer_question(SimpleNamespace(healthy=True, collection=collection), "When?", [], client, workflow=workflow)
     assert "signed contract" in result.text
     assert [item["round"] for item in result.trace if item["event"] == "validate"] == [1, 2, 3]
-    assert collection.query.call_count == 3 and client.chat.completions.create.call_count == 3
+    assert collection.query.call_count == 3 and client.sdk.chat.completions.create.call_count == 3
     assert all(call.kwargs["query_texts"] == ["When?"] for call in collection.query.call_args_list)
 
 
@@ -264,10 +264,10 @@ def test_new_retrieval_does_not_reuse_an_earlier_validation(client):
     collection.query.side_effect = [{"ids": [[identity]], "documents": [[text]],
         "metadatas": [[{"filename": "launch.txt", "location": "Text"}]]}
         for identity, text in [("one", "Launch in June."), ("two", "Contract not signed.")]]
-    client.chat.completions.create.side_effect = [completion(json.dumps({"decision": "sufficient", "confidence": 0.9})),
+    client.sdk.chat.completions.create.side_effect = [completion(json.dumps({"decision": "sufficient", "confidence": 0.9})),
         answer_completion("Launch in June. [1]")]
     answer_question(SimpleNamespace(healthy=True, collection=collection), "When?", [], client, workflow=workflow)
-    payload = json.loads(client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
+    payload = json.loads(client.sdk.chat.completions.create.call_args.kwargs["messages"][1]["content"])
     assert payload["validation"] is None
     assert len(payload["excerpts"]) == 2
     assert [item["node_id"] for item in payload["prior_outputs"]] == ["retrieve", "validate", "second"]
@@ -310,7 +310,7 @@ def test_configured_planner_and_retriever_control_searches(client):
     draft = DEFAULT_WORKFLOW.model_copy(deep=True)
     draft.nodes[0].config = {"max_searches": 2}
     draft.nodes[1].config = {"max_results_per_search": 1}
-    client.chat.completions.create.side_effect = [
+    client.sdk.chat.completions.create.side_effect = [
         completion(json.dumps({"searches": [
             {"query": query, "purpose": "Find launch date"} for query in ("a", "b", "c")
         ]})),
@@ -349,7 +349,7 @@ def test_registered_agent_appears_in_catalog_and_runs(manager, tokenizer, client
         ingest(library, "launch.txt", b"Launch in June.", lambda: tokenizer)
         result = answer_question(library, "When?", [], client, workflow=workflow)
         assert result.text == "From extension"
-        client.chat.completions.create.assert_not_called()
+        client.sdk.chat.completions.create.assert_not_called()
     finally:
         unregister_node("fixed_answer")
 
@@ -372,7 +372,7 @@ def test_bundled_clarification_extension_uses_the_new_contract(client):
         library = SimpleNamespace(healthy=True, collection=Mock())
         library.collection.count.return_value = 1
         assert answer_question(library, "When?", [], client, workflow=workflow).text == "Please upload the contract."
-        client.chat.completions.create.assert_not_called()
+        client.sdk.chat.completions.create.assert_not_called()
     finally:
         unregister_node("clarify")
 

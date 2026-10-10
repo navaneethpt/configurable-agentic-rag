@@ -3,7 +3,7 @@
 A local POC with a Next.js/TypeScript research workspace and a single-worker
 FastAPI backend. Independently registered agents and tools run in the workflow
 you configure. The default LangGraph workflow plans searches, retrieves from a
-temporary Chroma library, checks evidence, and generates a cited answer using Groq.
+temporary Chroma library, checks evidence, and generates a cited answer using Groq or Google Gemini.
 
 ## Setup and run
 
@@ -17,7 +17,7 @@ cd /Users/npt/Oracle/workspaces/ideas/configurable-agentic-rag-chatbot
 python3 -m venv .venv
 uv pip sync requirements.txt --python .venv/bin/python
 test -f .env || cp .env.example .env
-# Set GROQ_API_KEY in .env if not already configured.
+# Set LLM_PROVIDER and its API key in .env (see Model providers below).
 cd frontend
 npm ci
 npm run build
@@ -32,7 +32,7 @@ cd /Users/npt/Oracle/workspaces/ideas/configurable-agentic-rag-chatbot
 
 Open **http://127.0.0.1:8000**. API documentation is at
 **http://127.0.0.1:8000/docs**. FastAPI serves both the static Next.js export and
-`/api/*`; the Groq key stays in Python. Re-run `npm run build` after frontend
+`/api/*`; provider API keys stay in Python. Re-run `npm run build` after frontend
 changes, then restart Python to load the new export. If `frontend/out` has not been
 built, FastAPI starts API-only and the root page returns 404. Shell environment
 values override `.env`.
@@ -44,6 +44,59 @@ operation history, making their workflows inaccessible. The workflow rows remain
 `.data/workflows.sqlite3` (or the path in `FOLIO_WORKFLOWS_DB`). Existing shared
 custom workflows from older database versions are retained there but hidden from
 sessions because they have no owner.
+
+## Model providers
+
+Select one provider for the entire application. Gemini is the default when
+`LLM_PROVIDER` is unset, using `gemini-3.8-flash`. For a
+[Google AI Studio API key](https://aistudio.google.com/apikey):
+
+```dotenv
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_google_ai_studio_key
+# Optional; default is gemini-3.8-flash:
+LLM_MODEL=gemini-3.8-flash
+```
+
+To use Groq, select it explicitly:
+
+```dotenv
+LLM_PROVIDER=groq
+GROQ_API_KEY=your_groq_key
+# Optional; default is openai/gpt-oss-20b:
+# LLM_MODEL=openai/gpt-oss-20b
+```
+
+Only the selected provider's key is required and used; setting both keys does not
+enable automatic fallback. `LLM_PROVIDER` ignores case and surrounding whitespace.
+Shell/deployment environment variables override `.env`. Settings are read once at
+startup, so restart the backend after changes. Compose already loads `.env`;
+use `docker compose up -d --build --force-recreate` after changing it. On Railway
+or Render, set the same variables in the service environment and redeploy/restart.
+
+An agent model of `default` follows `LLM_MODEL`, or the provider's built-in default.
+Each agent can override it with a model ID from the selected provider. Older saved
+`openai/gpt-oss-20b` settings are treated as the `default` alias, with no workflow
+or database migration. Other explicit overrides are preserved; update them when
+switching providers. Unknown/incompatible models produce a safe error instead of
+being silently replaced. Provider selection is server-wide, not per workflow.
+
+Gemini uses the official `google-genai` SDK, native JSON schemas, and local
+Pydantic validation. The default Gemini model uses low thinking and a 4,096-token
+structured-response limit (including thinking); Groq retains its 768-token limit.
+Both clients use 45-second request timeouts and at most one transient transport
+retry. A malformed structured response may receive one additional repair call;
+answer citation correction is still enforced. These bounds apply to individual
+requests, not the entire multi-step workflow. Quota, authentication, blocked,
+empty, and truncated responses produce safe provider-specific errors.
+
+`GET /api/health` returns `status`, `answering_configured`, `provider`,
+`default_model`, and `configuration_error`, without credentials. It checks local
+configuration, not whether the provider has accepted the key or has quota. Missing
+or invalid configuration leaves uploads available and rejects chat with HTTP 503
+before research starts. The UI shows the selected provider's configuration error.
+Document embeddings and storage remain local; the selected provider receives the
+question, recent conversation, and model context containing retrieved excerpts.
 
 ## Deploy on Render
 
@@ -60,7 +113,9 @@ Use these settings:
 | Health Check Path | `/api/health` |
 | Instances | One; session libraries live in process memory |
 
-In **Environment**, add `GROQ_API_KEY` as a secret value. Do not add the key to the
+In **Environment**, add `GEMINI_API_KEY` from Google AI Studio as a secret
+(Gemini is the default), or set `LLM_PROVIDER=groq` and add `GROQ_API_KEY`.
+Optionally set `LLM_MODEL` to override the provider default. Do not add keys to the
 Dockerfile or commit `.env`. Render supplies `PORT`; the Docker command listens on
 `0.0.0.0:$PORT` with one worker. After deployment, open the service URL and check
 `/api/health` for `"answering_configured": true` before uploading a small document
@@ -71,7 +126,7 @@ This is a temporary-session POC. A restart or Free-plan spin-down discards docum
 libraries and session IDs. Saved workflows are then inaccessible even if their
 SQLite file remains on a persistent disk; a disk alone does not make sessions
 recoverable. Public Web Services also expose the upload and chat endpoints to
-anyone with the URL, which can consume the configured Groq API key.
+anyone with the URL, which can consume the configured provider API quota.
 
 ## Use the workspace
 
@@ -109,9 +164,9 @@ bytes are deduplicated; changed bytes count as a new document. Indexing failures
 roll back the document; rollback failure requires clearing the session.
 
 The initial upload downloads the local MiniLM ONNX embedding model (about 80 MB).
-Later sessions reuse its cache. Uploads work without a Groq key; answering requires
+Later sessions reuse its cache. Uploads work without a provider key; answering requires
 a key and connectivity. Questions, bounded recent conversation, and retrieved
-excerpts are sent to Groq. Original files are not retained after processing;
+excerpts are sent to the selected provider (Groq or Gemini). Original files are not retained after processing;
 multipart parsing may temporarily spool an upload to a temporary file, which is
 closed after it is read. Extracted text and vectors stay in memory.
 
@@ -262,7 +317,7 @@ could not bind its helper port in this environment.
 
 Browser tests first build the static export, then launch a test-only FastAPI server
 on 8100. That server serves the same export together with real in-memory Chroma,
-deterministic embeddings, and mocked Groq output. They exercise uploads, citations,
+deterministic embeddings, and mocked Groq/Gemini output. They exercise uploads, citations,
 evidence gaps, workflow editing and execution, refresh/disconnect recovery, expiry,
 clearing, and mobile drawers.
 Screenshots are written under `frontend/test-results`. The test server's expiry

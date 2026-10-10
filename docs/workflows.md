@@ -111,7 +111,33 @@ Set `FOLIO_NODE_MODULES=rag_chat.extensions.clarify`, restart the backend, and r
 the builder. Multiple importable modules can be separated by commas. Registered
 nodes and flat primitive configuration fields appear automatically.
 
-Factory arguments remain `(client, on_event, config)`. **The handler contract has
+Factory arguments remain `(client, on_event, config)`. The client is now a
+provider-neutral, context-managed `ModelClient`, rather than the raw Groq SDK.
+Use `client.complete(messages, model="default", max_tokens=1024, schema=None)`
+for text, or the shared `rag_chat.model_client._structured` helper for Pydantic
+outputs and bounded repair. `schema` is a JSON Schema dictionary; Gemini uses
+native structured output, while Groq retains the shared schema prompt. The
+client returns text and raises safe `ChatError` on provider failures. Extensions
+that used `client.chat.completions.create` must adopt this interface; the runner
+owns client cleanup. For example:
+
+```python
+from rag_chat.model_client import _structured
+from rag_chat.agents.common import GenerationOutput
+
+output = _structured(client, GenerationOutput, messages, "custom generator",
+                     model=config.get("model", "default"))
+```
+
+`LLM_PROVIDER` selects Groq or Gemini application-wide; Gemini is the default
+when unset, using `gemini-3.8-flash`. `LLM_MODEL` supplies
+the default; agents may override it with a model ID from that provider. The
+legacy `openai/gpt-oss-20b` value follows the selected default. Other overrides
+are preserved and must be updated when switching providers. No graph/database
+migration is needed. See [Model providers](../README.md#model-providers) for keys,
+timeouts, configuration errors, and deployment settings.
+
+**The handler contract has
 changed:** extensions must accept `NodeInput` and return `NodeResult`, replacing the
 old shared-state dictionary and `(state_updates, output_name)` tuple. Existing
 extensions must be updated before use. `requires`/`provides` declarations are

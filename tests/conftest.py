@@ -12,6 +12,7 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 
 from rag_chat.sessions import SessionManager
+from rag_chat.providers import GroqClient
 
 
 class TestEmbedding(EmbeddingFunction):
@@ -59,7 +60,7 @@ def manager():
 def client():
     result = Mock()
     result.chat.completions.create.return_value = completion("The launch is in June. [1]")
-    return result
+    return GroqClient(sdk=result)
 
 
 def completion(text):
@@ -68,3 +69,11 @@ def completion(text):
 
 def answer_completion(text="The launch is in June. [1]", status="answered"):
     return completion(json.dumps({"status": status, "text": text}))
+
+
+@pytest.fixture(autouse=True)
+def isolate_provider_environment(monkeypatch):
+    # Do not read real credentials from the developer's .env during offline tests.
+    for name, value in {"LLM_PROVIDER": "groq", "LLM_MODEL": "",
+                        "GROQ_API_KEY": "", "GEMINI_API_KEY": ""}.items():
+        monkeypatch.setenv(name, value)

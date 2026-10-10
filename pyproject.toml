@@ -1,7 +1,7 @@
 [project]
 name = "agentic-rag-chatbot"
 version = "0.1.0"
-description = "Next.js and FastAPI document research with LangGraph, Chroma, and Groq"
+description = "Next.js and FastAPI document research with LangGraph, Chroma, Groq, and Gemini"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",
@@ -9,6 +9,7 @@ dependencies = [
   "python-multipart>=0.0.18,<1",
   "chromadb>=1.0,<2",
   "groq>=0.31,<1",
+  "google-genai>=2.29,<3",
   "langgraph>=1,<2",
   "pydantic>=2,<3",
   "pypdf>=6,<7",
