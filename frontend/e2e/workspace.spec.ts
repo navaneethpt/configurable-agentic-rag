@@ -63,6 +63,47 @@ test("reload during research recovers without submitting twice", async ({ page }
   await expect(page.getByRole("button", { name: "Source 1", exact: true })).toBeVisible();
 });
 
+for (const dropTerminal of [false, true]) {
+  test(`shows the answer when the proxy ${dropTerminal ? "drops the final event" : "keeps the completed stream open"}`, async ({ page }) => {
+    await page.addInitScript(dropTerminal => {
+      const fetch = window.fetch.bind(window);
+      window.fetch = async (input, init) => {
+        const response = await fetch(input, init);
+        const url = input instanceof Request ? input.url : String(input);
+        if (new URL(url, window.location.origin).pathname !== "/api/chat" || !response.ok) return response;
+        const text = await response.text();
+        const forwarded = dropTerminal ? text.split("\n\n").filter(frame => !/^event: (answer|error)\n/.test(frame)).join("\n\n") : text;
+        const abort = () => controller?.error(new DOMException("Aborted", "AbortError"));
+        let controller: ReadableStreamDefaultController<Uint8Array>;
+        const body = new ReadableStream<Uint8Array>({
+          start(value) {
+            controller = value;
+            controller.enqueue(new TextEncoder().encode(forwarded));
+            if (init?.signal?.aborted) abort();
+            else init?.signal?.addEventListener("abort", abort, { once: true });
+            // Deliberately leave the response open to reproduce a stalled proxy.
+          },
+          cancel() { init?.signal?.removeEventListener("abort", abort); },
+        });
+        return new Response(body, { status: response.status, headers: response.headers });
+      };
+    }, dropTerminal);
+    let submissions = 0;
+    page.on("request", request => { if (new URL(request.url()).pathname === "/api/chat") submissions++; });
+    await upload(page);
+    await ask(page, "When does it launch?");
+    await expect(page.locator(".right-panel")).toContainText("Answer checked and ready");
+    await expect(page.locator(".message.assistant")).toContainText("Project Cedar launches in June.");
+    await expect(page.getByRole("button", { name: "Source 1", exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Ask about your documents" })).toBeEnabled();
+    await expect(page.getByRole("status")).toHaveCount(0);
+    expect(submissions).toBe(1);
+    await page.reload();
+    await expect(page.locator(".message.assistant")).toHaveCount(1);
+    await expect(page.locator(".message.user")).toHaveCount(1);
+  });
+}
+
 test("failed chat keeps the question available for manual retry", async ({ page }) => {
   await upload(page);
   await page.route("**/api/chat", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "Provider temporarily unavailable" }) }));

@@ -202,7 +202,9 @@ timer. Active work is protected from expiry and restarts the timer on completion
 Clearing and conflicting requests are rejected while an operation is running.
 
 Disconnecting does not cancel an accepted operation. Research completes in Python;
-the browser reads session status and polls active work to recover the result.
+the browser polls session status while streaming to recover the saved result if a
+proxy loses the final event or leaves the connection open. An answer or error event
+ends the browser's stream immediately, without waiting for the connection to close.
 It never automatically resubmits a question. Traces show observable actions and
 explicit agent outputs, not private model reasoning. Workflow definitions are
 saved in SQLite and owned by the session that created them; other sessions cannot

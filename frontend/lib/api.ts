@@ -48,7 +48,7 @@ export async function readEvents(body: ReadableStream<Uint8Array>, receive: (eve
       const data = lines.filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
       if (event && data) {
         receive({ event, data: JSON.parse(data) });
-        if (event === "answer" || event === "error") terminal = true;
+        if (event === "answer" || event === "error") { terminal = true; return; }
       }
     }
   }
@@ -57,17 +57,55 @@ export async function readEvents(body: ReadableStream<Uint8Array>, receive: (eve
       const { value, done } = await reader.read();
       buffer += decoder.decode(value, { stream: !done });
       consume();
-      if (done) break;
+      if (terminal || done) break;
     }
     if (!terminal) throw new Error("Connection interrupted. Checking research status…");
-  } finally { reader.releaseLock(); }
+  } finally {
+    if (terminal) void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }
-export async function research(session: string, question: string, receive: (event: StreamEvent) => void, workflowId = "default") {
-  const response = await fetch("/api/chat", {
-    method: "POST", headers: { "Content-Type": "application/json", "X-Session-ID": session },
-    body: JSON.stringify({ question, workflow_id: workflowId }),
+export async function research(session: string, question: string, receive: (event: StreamEvent) => void,
+                               workflowId = "default", previousOperationId?: string) {
+  const controller = new AbortController();
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const streamed = async () => {
+    const response = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Session-ID": session },
+      body: JSON.stringify({ question, workflow_id: workflowId }), signal: controller.signal,
+    });
+    await check(response);
+    if (!response.body) throw new Error("The research stream was unavailable.");
+    await readEvents(response.body, receive);
+  };
+  // A proxy can keep SSE open or lose its final frame. Recover the saved result
+  // while streaming, without submitting the question a second time.
+  const recovered = new Promise<void>((resolve, reject) => {
+    const poll = async () => {
+      try {
+        const state = await api<Snapshot>("/session", session, { signal: controller.signal });
+        if (stopped) return;
+        const operation = state.operation;
+        if (operation?.kind === "chat" && operation.id !== previousOperationId && operation.question === question) {
+          if (operation.status === "complete") {
+            const answer = state.messages.filter(message => message.role === "assistant").at(-1);
+            if (answer) { receive({ event: "answer", data: answer }); resolve(); return; }
+          }
+          if (operation.status === "failed") {
+            receive({ event: "error", data: { detail: operation.error || "Research failed." } });
+            resolve(); return;
+          }
+        }
+      } catch (reason) {
+        if (stopped) return;
+        if (reason instanceof ApiError && reason.status === 410) { reject(reason); return; }
+        // A temporary polling failure does not discard the live stream.
+      }
+      if (!stopped) timer = setTimeout(poll, 1000);
+    };
+    timer = setTimeout(poll, 1000);
   });
-  await check(response);
-  if (!response.body) throw new Error("The research stream was unavailable.");
-  await readEvents(response.body, receive);
+  try { await Promise.race([streamed(), recovered]); }
+  finally { stopped = true; clearTimeout(timer); controller.abort(); }
 }

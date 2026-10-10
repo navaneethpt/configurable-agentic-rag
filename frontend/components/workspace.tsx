@@ -171,7 +171,7 @@ export default function Workspace() {
         if (event === "progress") setEvents(items => [...items, data as Trace]);
         if (event === "answer") { setSelected((data as Message).id); setQuestion(""); }
         if (event === "error") { failed = true; setError((data as { detail: string }).detail); }
-      }, activeWorkflow?.id || "default");
+      }, activeWorkflow?.id || "default", previousOperation);
     } catch (reason) { failed = true; handleError(reason); }
     finally {
       try {
